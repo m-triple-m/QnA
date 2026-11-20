@@ -30,12 +30,20 @@ module.exports = function(io) {
         socket.join(roomId);
         socket.join(`host:${sessionId}`);
 
-        if (!sessionStore.has(sessionId)) sessionStore.set(sessionId, {});
-        sessionStore.get(sessionId).hostSocketId = socket.id;
+        if (!sessionStore.has(Number(sessionId))) sessionStore.set(Number(sessionId), {});
+        sessionStore.get(Number(sessionId)).hostSocketId = socket.id;
 
-        // Send current participant list
+        const store = sessionStore.get(Number(sessionId)) || {};
+
+        // Send current participant list with vote status
         const participants = await Participant.findAll({ where: { session_id: sessionId }, order: [['score','DESC']] });
-        socket.emit('session:state', { session, participants });
+        const participantsWithStatus = participants.map((p) => ({
+          id: p.id,
+          nickname: p.nickname,
+          score: p.score,
+          hasVoted: Boolean(store.currentAnswers && store.currentAnswers.has(Number(p.id))),
+        }));
+        socket.emit('session:state', { session, participants: participantsWithStatus });
         logger.info(`Host joined session ${sessionId}`);
       } catch (err) {
         logger.error('host:join_session error', err);
@@ -43,20 +51,120 @@ module.exports = function(io) {
       }
     });
 
+    // Helper to push a question to all clients in a session
+    async function pushQuestion(sessionId, questionIndex = 0) {
+      const session = await Session.findByPk(sessionId, {
+        include: [{ model: Quiz, as: 'quiz' }],
+      });
+      if (!session) throw new Error('Session not found');
+      if (session.status === 'ended') throw new Error('Session has ended');
+
+      if (session.status !== 'live') {
+        await session.update({ status: 'live', started_at: session.started_at || new Date() });
+      }
+
+      const questions = await Question.findAll({
+        where: { quiz_id: session.quiz_id },
+        order: [['order_index', 'ASC'], ['id', 'ASC']],
+      });
+
+      if (!questions || questions.length === 0) {
+        throw new Error('This quiz has no questions. Please add questions first.');
+      }
+
+      const question = questions[questionIndex];
+      if (!question) {
+        throw new Error(`Question index ${questionIndex} out of range`);
+      }
+
+      await session.update({ current_question_index: questionIndex });
+
+      const options = await Option.findAll({
+        where: { question_id: question.id },
+        order: [['id', 'ASC']],
+      });
+      const safeOptions = options.map((o) => ({
+        id: o.id,
+        text: o.text,
+        media_url: o.media_url || null,
+      }));
+
+      // Clear existing question timer and reset question votes
+      const store = sessionStore.get(Number(sessionId)) || {};
+      if (store.questionTimer) clearTimeout(store.questionTimer);
+      store.currentAnswers = new Map();
+      sessionStore.set(Number(sessionId), store);
+
+      const questionPayload = {
+        questionIndex,
+        total: questions.length,
+        id: question.id,
+        text: question.text,
+        type: question.type,
+        media_url: question.media_url,
+        time_limit_sec: question.time_limit_sec,
+        points: question.points,
+        options: safeOptions,
+      };
+
+      // Broadcast question to all participants and host
+      io.to(`session:${sessionId}`).emit('session:question', questionPayload);
+
+      // Schedule auto-advance time_up
+      store.questionTimer = setTimeout(async () => {
+        // Broadcast that time is up / voting is closed
+        io.to(`session:${sessionId}`).emit('session:time_up', {
+          questionId: question.id,
+          votingClosed: true,
+        });
+
+        // Only auto-reveal if host explicitly enabled autoReveal
+        if (store.autoReveal) {
+          const correctOptions = options
+            .filter((o) => o.is_correct)
+            .map((o) => ({ id: o.id, text: o.text, media_url: o.media_url || null }));
+          io.to(`session:${sessionId}`).emit('session:time_up', {
+            questionId: question.id,
+            votingClosed: true,
+            correctOptions,
+          });
+          io.to(`session:${sessionId}`).emit('session:answer_revealed', {
+            questionId: question.id,
+            correctOptions,
+          });
+
+          const participants = await Participant.findAll({
+            where: { session_id: sessionId },
+            order: [['score', 'DESC']],
+            limit: 10,
+          });
+          io.to(`session:${sessionId}`).emit('session:leaderboard', {
+            leaderboard: participants.map((p, i) => ({ rank: i + 1, nickname: p.nickname, score: p.score })),
+          });
+        }
+      }, (question.time_limit_sec + 2) * 1000);
+
+      sessionStore.set(Number(sessionId), store);
+      logger.info(`Session ${sessionId} pushed question ${questionIndex + 1} of ${questions.length}`);
+    }
+
     // Host starts the session
     // Event: 'host:start_session'  payload: { sessionId }
     socket.on('host:start_session', async ({ sessionId }) => {
       try {
         const session = await Session.findByPk(sessionId);
-        if (!session || session.status !== 'waiting') {
-          return socket.emit('error', { message: 'Session cannot be started' });
-        }
-        await session.update({ status: 'live', started_at: new Date() });
+        if (!session) return socket.emit('error', { message: 'Session not found' });
+        if (session.status === 'ended') return socket.emit('error', { message: 'Session has already ended' });
+
+        await session.update({ status: 'live', started_at: session.started_at || new Date() });
         io.to(`session:${sessionId}`).emit('session:started', { message: 'Quiz is starting!' });
         logger.info(`Session ${sessionId} started`);
+
+        // Automatically push the first question
+        await pushQuestion(sessionId, 0);
       } catch (err) {
         logger.error('host:start_session error', err);
-        socket.emit('error', { message: 'Failed to start session' });
+        socket.emit('error', { message: err.message || 'Failed to start session' });
       }
     });
 
@@ -64,58 +172,10 @@ module.exports = function(io) {
     // Event: 'host:next_question'  payload: { sessionId, questionIndex }
     socket.on('host:next_question', async ({ sessionId, questionIndex }) => {
       try {
-        const session = await Session.findOne({
-          where: { id: sessionId, status: 'live' },
-          include: [{ model: Quiz, as: 'quiz', include: [{ model: Question, as: 'questions', order: [['order_index','ASC']] }] }]
-        });
-        if (!session) return socket.emit('error', { message: 'Session not live' });
-        
-        const questions = session.quiz.questions;
-        const question = questions[questionIndex];
-        if (!question) return socket.emit('error', { message: 'Question not found' });
-
-        await session.update({ current_question_index: questionIndex });
-
-        // Load options. For MCQ/true_false/poll — send shuffled options (hide is_correct)
-        const options = await Option.findAll({ where: { question_id: question.id } });
-        const safeOptions = options.map(o => ({ id: o.id, text: o.text }));
-        
-        // Clear any existing timer for this session
-        const store = sessionStore.get(sessionId) || {};
-        if (store.questionTimer) clearTimeout(store.questionTimer);
-
-        const questionPayload = {
-          questionIndex,
-          total: questions.length,
-          id: question.id,
-          text: question.text,
-          type: question.type,
-          media_url: question.media_url,
-          time_limit_sec: question.time_limit_sec,
-          points: question.points,
-          options: safeOptions,
-        };
-
-        // Broadcast to all in room
-        io.to(`session:${sessionId}`).emit('session:question', questionPayload);
-
-        // Auto-advance timer: after time_limit_sec, emit time_up and show correct answer
-        store.questionTimer = setTimeout(async () => {
-          const correctOptions = options.filter(o => o.is_correct).map(o => ({ id: o.id, text: o.text }));
-          io.to(`session:${sessionId}`).emit('session:time_up', {
-            questionId: question.id,
-            correctOptions,
-          });
-          // Send leaderboard after time_up
-          const participants = await Participant.findAll({ where: { session_id: sessionId }, order: [['score','DESC']], limit: 10 });
-          io.to(`session:${sessionId}`).emit('session:leaderboard', { leaderboard: participants.map((p,i) => ({ rank: i+1, nickname: p.nickname, score: p.score })) });
-        }, (question.time_limit_sec + 2) * 1000); // 2s grace
-
-        sessionStore.set(sessionId, store);
-        logger.info(`Session ${sessionId} question ${questionIndex} pushed`);
+        await pushQuestion(sessionId, Number(questionIndex));
       } catch (err) {
         logger.error('host:next_question error', err);
-        socket.emit('error', { message: 'Failed to push question' });
+        socket.emit('error', { message: err.message || 'Failed to push question' });
       }
     });
 
@@ -123,26 +183,35 @@ module.exports = function(io) {
     // Event: 'host:reveal_answer' payload: { sessionId }
     socket.on('host:reveal_answer', async ({ sessionId }) => {
       try {
-        const store = sessionStore.get(sessionId) || {};
+        const store = sessionStore.get(Number(sessionId)) || {};
         if (store.questionTimer) {
           clearTimeout(store.questionTimer);
           store.questionTimer = null;
         }
 
-        const session = await Session.findOne({
-          where: { id: sessionId, status: 'live' },
-          include: [{ model: Quiz, as: 'quiz', include: [{ model: Question, as: 'questions', order: [['order_index', 'ASC']] }] }],
+        const session = await Session.findByPk(sessionId, {
+          include: [{ model: Quiz, as: 'quiz' }],
         });
-        if (!session) return socket.emit('error', { message: 'Session not live' });
+        if (!session) return socket.emit('error', { message: 'Session not found' });
 
-        const questions = session.quiz.questions;
+        const questions = await Question.findAll({
+          where: { quiz_id: session.quiz_id },
+          order: [['order_index', 'ASC'], ['id', 'ASC']],
+        });
         const question = questions[session.current_question_index];
         if (!question) return socket.emit('error', { message: 'Question not found' });
 
         const options = await Option.findAll({ where: { question_id: question.id } });
-        const correctOptions = options.filter(o => o.is_correct).map(o => ({ id: o.id, text: o.text }));
+        const correctOptions = options
+          .filter((o) => o.is_correct)
+          .map((o) => ({ id: o.id, text: o.text, media_url: o.media_url || null }));
 
         io.to(`session:${sessionId}`).emit('session:time_up', {
+          questionId: question.id,
+          votingClosed: true,
+          correctOptions,
+        });
+        io.to(`session:${sessionId}`).emit('session:answer_revealed', {
           questionId: question.id,
           correctOptions,
         });
@@ -155,11 +224,20 @@ module.exports = function(io) {
         io.to(`session:${sessionId}`).emit('session:leaderboard', {
           leaderboard: participants.map((p, i) => ({ rank: i + 1, nickname: p.nickname, score: p.score })),
         });
-        logger.info(`Host revealed answer early for session ${sessionId} question ${session.current_question_index}`);
+        logger.info(`Host revealed answer early for session ${sessionId} question ${session.current_question_index + 1}`);
       } catch (err) {
         logger.error('host:reveal_answer error', err);
         socket.emit('error', { message: 'Failed to reveal answer' });
       }
+    });
+
+    // Host updates Auto-Reveal setting on the fly
+    // Event: 'host:set_auto_reveal' payload: { sessionId, autoReveal }
+    socket.on('host:set_auto_reveal', ({ sessionId, autoReveal }) => {
+      const store = sessionStore.get(Number(sessionId)) || {};
+      store.autoReveal = Boolean(autoReveal);
+      sessionStore.set(Number(sessionId), store);
+      logger.info(`Session ${sessionId} autoReveal set to ${store.autoReveal}`);
     });
 
     // Host ends the session
@@ -187,45 +265,71 @@ module.exports = function(io) {
 
     // ─── PARTICIPANT EVENTS ─────────────────────────────────────────────
 
-    // Participant joins the session via QR scan
+    // Participant joins the session via QR scan or PIN code
     // Event: 'participant:join'  payload: { sessionCode, nickname }
     socket.on('participant:join', async ({ sessionCode, nickname }) => {
       try {
-        if (!nickname || nickname.trim().length < 1 || nickname.trim().length > 30) {
-          return socket.emit('error', { message: 'Nickname must be 1-30 characters' });
-        }
-        const session = await Session.findOne({
-          where: { code: sessionCode },
-          include: [{ model: Quiz, as: 'quiz', include: [{ association: 'host', attributes: ['name'] }] }],
-        });
-        if (!session) return socket.emit('error', { message: 'Session not found' });
-        if (session.status === 'ended') return socket.emit('error', { message: 'This quiz has already ended' });
+        const cleanCode = (sessionCode || '').toString().trim().toUpperCase();
+        const cleanNickname = (nickname || '').toString().trim();
 
-        // Check nickname uniqueness in this session
-        const existing = await Participant.findOne({ where: { session_id: session.id, nickname: nickname.trim() } });
-        if (existing) {
-          // Update socket_id if reconnecting
-          await existing.update({ socket_id: socket.id });
-          socket.join(`session:${session.id}`);
-          socket.emit('session:joined', { participantId: existing.id, sessionId: session.id, nickname: existing.nickname, quizTitle: session.quiz.title, status: session.status });
+        if (!cleanNickname || cleanNickname.length < 1 || cleanNickname.length > 30) {
+          return socket.emit('error', { message: 'Nickname must be between 1 and 30 characters' });
+        }
+        if (!cleanCode) {
+          return socket.emit('error', { message: 'Session PIN is required' });
+        }
+
+        const session = await Session.findOne({
+          where: { code: cleanCode },
+          include: [{ model: Quiz, as: 'quiz' }],
+        });
+
+        if (!session) {
+          return socket.emit('error', { message: `Session with PIN "${cleanCode}" was not found.` });
+        }
+        if (session.status === 'ended') {
+          return socket.emit('error', { message: 'This quiz has already ended.' });
+        }
+
+        // Check if participant already exists in this session (e.g. reconnecting)
+        let participant = await Participant.findOne({
+          where: { session_id: session.id, nickname: cleanNickname },
+        });
+
+        if (participant) {
+          await participant.update({ socket_id: socket.id });
         } else {
-          const participant = await Participant.create({
+          participant = await Participant.create({
             session_id: session.id,
-            nickname: nickname.trim(),
+            nickname: cleanNickname,
             socket_id: socket.id,
             joined_at: new Date(),
           });
-          socket.join(`session:${session.id}`);
-          socket.emit('session:joined', { participantId: participant.id, sessionId: session.id, nickname: participant.nickname, quizTitle: session.quiz.title, status: session.status });
         }
 
-        // Notify host of new participant
+        socket.join(`session:${session.id}`);
+
+        socket.emit('session:joined', {
+          participantId: participant.id,
+          sessionId: session.id,
+          nickname: participant.nickname,
+          quizTitle: session.quiz?.title || 'Live Quiz',
+          status: session.status,
+          currentQuestionIndex: session.current_question_index,
+        });
+
+        // Notify host of new participant with their ID and initial score
         const count = await Participant.count({ where: { session_id: session.id } });
-        io.to(`host:${session.id}`).emit('session:participant_joined', { nickname: nickname.trim(), participantCount: count });
-        logger.info(`Participant ${nickname} joined session ${session.id}`);
+        io.to(`host:${session.id}`).emit('session:participant_joined', {
+          participantId: participant.id,
+          nickname: cleanNickname,
+          score: participant.score || 0,
+          participantCount: count,
+        });
+        logger.info(`Participant "${cleanNickname}" joined session ${session.id} (PIN: ${cleanCode})`);
       } catch (err) {
         logger.error('participant:join error', err);
-        socket.emit('error', { message: 'Failed to join session' });
+        socket.emit('error', { message: 'Failed to join session: ' + err.message });
       }
     });
 
@@ -267,17 +371,38 @@ module.exports = function(io) {
           await participant.increment('score', { by: pointsAwarded });
         }
 
-        socket.emit('answer:result', { isCorrect, pointsAwarded, totalScore: participant.score + pointsAwarded });
+        const newTotalScore = participant.score + pointsAwarded;
+        socket.emit('answer:result', { isCorrect, pointsAwarded, totalScore: newTotalScore });
 
-        // Notify host with option details for live slide updates
-        io.to(`host:${sessionId}`).emit('session:answer_received', {
-          participantId,
+        const store = sessionStore.get(Number(sessionId)) || {};
+        if (!store.currentAnswers) store.currentAnswers = new Map();
+        store.currentAnswers.set(Number(participantId), {
+          timeTakenMs,
           optionId: optionId || null,
           textAnswer: textAnswer || null,
           isCorrect,
           pointsAwarded,
         });
-        logger.info(`Participant ${participantId} answered question ${questionId}`);
+        sessionStore.set(Number(sessionId), store);
+
+        // Notify host with participant details, live vote status, and updated score
+        io.to(`host:${sessionId}`).emit('session:answer_received', {
+          participantId: participant.id,
+          nickname: participant.nickname,
+          score: newTotalScore,
+          optionId: optionId || null,
+          textAnswer: textAnswer || null,
+          isCorrect,
+          pointsAwarded,
+          timeTakenMs,
+          answeredCount: store.currentAnswers.size,
+        });
+
+        // Notify participants room about overall voting progress
+        io.to(`session:${sessionId}`).emit('session:vote_progress', {
+          answeredCount: store.currentAnswers.size,
+        });
+        logger.info(`Participant ${participantId} ("${participant.nickname}") answered question ${questionId}`);
       } catch (err) {
         logger.error('participant:answer error', err);
         socket.emit('error', { message: 'Failed to submit answer' });

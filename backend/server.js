@@ -30,7 +30,7 @@ async function bootstrap() {
     logger.info(`Database synced (${NODE_ENV} mode, alter=${syncOptions.alter ?? false}).`);
 
     // 3. Start listening
-    server.listen(PORT, () => {
+    server.listen(PORT, '192.168.18.61', () => {
       logger.info(`QuizLive backend running on port ${PORT} [${NODE_ENV}]`);
     });
   } catch (err) {

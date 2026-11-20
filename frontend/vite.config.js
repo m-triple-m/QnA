@@ -7,8 +7,9 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
   server: {
     proxy: {
-      '/api': 'http://localhost:5000',
-      '/socket.io': { target: 'http://localhost:5000', ws: true }
+      '/api': 'http://192.168.18.61:5000',
+      '/uploads': 'http://192.168.18.61:5000',
+      '/socket.io': { target: 'http://192.168.18.61:5000', ws: true }
     }
   }
 })

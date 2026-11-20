@@ -3,9 +3,13 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   Plus, Trash2, ArrowUp, ArrowDown, Save, ArrowLeft,
-  Clock, Award, HelpCircle, CheckCircle2, Circle, AlertCircle, Loader2, Image
+  Clock, Award, HelpCircle, CheckCircle2, Circle, AlertCircle, Loader2, Image,
+  Upload, X
 } from 'lucide-react';
-import { createQuiz, getQuiz, updateQuiz, addQuestion, updateQuestion, deleteQuestion } from '@/api/endpoints';
+import {
+  createQuiz, getQuiz, updateQuiz, addQuestion, updateQuestion, deleteQuestion, uploadMedia
+} from '@/api/endpoints';
+import { getMediaUrl } from '@/lib/utils';
 
 const QUESTION_TYPES = [
   { value: 'mcq', label: 'Multiple Choice' },
@@ -25,10 +29,10 @@ const defaultQuestion = (order_index = 0) => ({
   media_url: '',
   order_index,
   options: [
-    { text: '', is_correct: true },
-    { text: '', is_correct: false },
-    { text: '', is_correct: false },
-    { text: '', is_correct: false },
+    { text: '', media_url: '', is_correct: true },
+    { text: '', media_url: '', is_correct: false },
+    { text: '', media_url: '', is_correct: false },
+    { text: '', media_url: '', is_correct: false },
   ],
 });
 
@@ -43,6 +47,8 @@ export default function QuizBuilderPage() {
   const [loading, setLoading] = useState(isEditing);
   const [saving, setSaving] = useState(false);
   const [originalQuestionIds, setOriginalQuestionIds] = useState([]);
+  const [uploadingQIdx, setUploadingQIdx] = useState(null);
+  const [uploadingOpt, setUploadingOpt] = useState(null); // { qIdx, optIdx }
 
   useEffect(() => {
     if (isEditing) {
@@ -190,6 +196,61 @@ export default function QuizBuilderPage() {
     });
   };
 
+  // Image Upload Handlers
+  const handleQuestionImageUpload = async (qIdx, file) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('File size exceeds 10MB limit.');
+      return;
+    }
+    setUploadingQIdx(qIdx);
+    try {
+      const res = await uploadMedia(file);
+      const url = res.url || res.data?.url || res;
+      handleQuestionChange(qIdx, 'media_url', url);
+      toast.success('Question image uploaded!');
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to upload question image');
+    } finally {
+      setUploadingQIdx(null);
+    }
+  };
+
+  const handleOptionImageUpload = async (qIdx, optIdx, file) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('File size exceeds 10MB limit.');
+      return;
+    }
+    setUploadingOpt({ qIdx, optIdx });
+    try {
+      const res = await uploadMedia(file);
+      const url = res.url || res.data?.url || res;
+      setQuestions((prev) => {
+        const next = [...prev];
+        const opts = [...next[qIdx].options];
+        opts[optIdx] = { ...opts[optIdx], media_url: url };
+        next[qIdx] = { ...next[qIdx], options: opts };
+        return next;
+      });
+      toast.success(`Option ${optIdx + 1} image uploaded!`);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to upload option image');
+    } finally {
+      setUploadingOpt(null);
+    }
+  };
+
+  const handleRemoveOptionImage = (qIdx, optIdx) => {
+    setQuestions((prev) => {
+      const next = [...prev];
+      const opts = [...next[qIdx].options];
+      opts[optIdx] = { ...opts[optIdx], media_url: '' };
+      next[qIdx] = { ...next[qIdx], options: opts };
+      return next;
+    });
+  };
+
   // Validation
   const validateForm = () => {
     if (!title.trim() || title.length < 3) {
@@ -208,8 +269,9 @@ export default function QuizBuilderPage() {
           return false;
         }
         for (let j = 0; j < q.options.length; j++) {
-          if (!q.options[j].text.trim()) {
-            toast.error(`Question #${i + 1}, option #${j + 1} is empty.`);
+          const opt = q.options[j];
+          if (!opt.text?.trim() && !opt.media_url?.trim()) {
+            toast.error(`Question #${i + 1}, option #${j + 1} must have either text or an image.`);
             return false;
           }
         }
@@ -224,8 +286,9 @@ export default function QuizBuilderPage() {
           return false;
         }
         for (let j = 0; j < q.options.length; j++) {
-          if (!q.options[j].text.trim()) {
-            toast.error(`Poll question #${i + 1}, option #${j + 1} is empty.`);
+          const opt = q.options[j];
+          if (!opt.text?.trim() && !opt.media_url?.trim()) {
+            toast.error(`Poll question #${i + 1}, option #${j + 1} must have either text or an image.`);
             return false;
           }
         }
@@ -252,7 +315,8 @@ export default function QuizBuilderPage() {
             order_index: i,
             media_url: q.media_url?.trim() || null,
             options: q.type === 'short_answer' ? [] : q.options.map((o) => ({
-              text: o.text.trim(),
+              text: o.text ? o.text.trim() : '',
+              media_url: o.media_url?.trim() || null,
               is_correct: Boolean(o.is_correct),
             })),
           })),
@@ -285,7 +349,8 @@ export default function QuizBuilderPage() {
             order_index: i,
             media_url: q.media_url?.trim() || null,
             options: q.type === 'short_answer' ? [] : q.options.map((o) => ({
-              text: o.text.trim(),
+              text: o.text ? o.text.trim() : '',
+              media_url: o.media_url?.trim() || null,
               is_correct: Boolean(o.is_correct),
             })),
           };
@@ -481,16 +546,69 @@ export default function QuizBuilderPage() {
               </div>
 
               <div>
-                <label className="flex items-center gap-1 text-xs font-semibold text-gray-600 mb-1">
-                  <Image className="w-3.5 h-3.5 text-gray-400" /> Media URL (Optional)
+                <label className="flex items-center justify-between text-xs font-semibold text-gray-600 mb-1">
+                  <span className="flex items-center gap-1">
+                    <Image className="w-3.5 h-3.5 text-gray-400" /> Question Image (Optional)
+                  </span>
+                  {q.media_url && (
+                    <button
+                      type="button"
+                      onClick={() => handleQuestionChange(qIdx, 'media_url', '')}
+                      className="text-red-500 hover:text-red-700 text-xs flex items-center gap-0.5"
+                    >
+                      <X className="w-3 h-3" /> Remove
+                    </button>
+                  )}
                 </label>
-                <input
-                  type="url"
-                  value={q.media_url || ''}
-                  onChange={(e) => handleQuestionChange(qIdx, 'media_url', e.target.value)}
-                  placeholder="https://..."
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-700"
-                />
+
+                {q.media_url ? (
+                  <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-2 flex items-center gap-3">
+                    <img
+                      src={getMediaUrl(q.media_url)}
+                      alt="Question visual"
+                      className="w-12 h-12 object-cover rounded-lg border border-gray-200 bg-white shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-700 truncate">{q.media_url}</p>
+                      <span className="text-[10px] text-green-700 font-semibold bg-green-100 px-1.5 py-0.5 rounded">Image Attached</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <label className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-dashed border-gray-300 hover:border-purple-500 hover:bg-purple-50/50 rounded-xl cursor-pointer text-xs font-medium text-gray-600 transition">
+                      {uploadingQIdx === qIdx ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-600" />
+                          <span>Uploading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-3.5 h-3.5 text-purple-600" />
+                          <span>Upload Image</span>
+                        </>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={uploadingQIdx === qIdx}
+                        className="hidden"
+                        onChange={(e) => {
+                          if (e.target.files?.[0]) {
+                            handleQuestionImageUpload(qIdx, e.target.files[0]);
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                    <input
+                      type="text"
+                      value={q.media_url || ''}
+                      onChange={(e) => handleQuestionChange(qIdx, 'media_url', e.target.value)}
+                      placeholder="or URL"
+                      className="w-24 px-2 py-2 rounded-xl border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-700"
+                    />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -510,7 +628,7 @@ export default function QuizBuilderPage() {
                       ? 'Poll Options (Everyone gets points / no wrong answer)'
                       : q.type === 'true_false'
                       ? 'Select the correct statement'
-                      : 'Answer Options (Click checkmark to set correct answer)'}
+                      : 'Answer Options (Click checkmark to set correct answer, image icon to upload picture)'}
                   </span>
                   {q.type === 'mcq' && q.options.length < 6 && (
                     <button
@@ -536,7 +654,7 @@ export default function QuizBuilderPage() {
                       <button
                         type="button"
                         onClick={() => handleOptionCorrectToggle(qIdx, optIdx)}
-                        className={`p-1 rounded-full transition ${
+                        className={`p-1 rounded-full transition shrink-0 ${
                           opt.is_correct
                             ? 'text-green-600'
                             : 'text-gray-300 hover:text-gray-500'
@@ -550,20 +668,69 @@ export default function QuizBuilderPage() {
                         )}
                       </button>
 
+                      {/* Option Image Thumbnail if present */}
+                      {opt.media_url && (
+                        <div className="relative group shrink-0">
+                          <img
+                            src={getMediaUrl(opt.media_url)}
+                            alt={`Option ${optIdx + 1}`}
+                            className="w-10 h-10 object-cover rounded-lg border border-gray-200 bg-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveOptionImage(qIdx, optIdx)}
+                            className="absolute -top-1.5 -right-1.5 bg-red-500 hover:bg-red-600 text-white rounded-full p-0.5 shadow transition opacity-80 group-hover:opacity-100"
+                            title="Remove option image"
+                          >
+                            <X className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      )}
+
                       <input
                         type="text"
-                        value={opt.text}
+                        value={opt.text || ''}
                         disabled={q.type === 'true_false'}
                         onChange={(e) => handleOptionTextChange(qIdx, optIdx, e.target.value)}
-                        placeholder={`Option ${optIdx + 1}`}
-                        className="flex-1 bg-transparent text-sm text-gray-800 placeholder-gray-400 focus:outline-none"
+                        placeholder={opt.media_url ? `Label (optional)` : `Option ${optIdx + 1}`}
+                        className="flex-1 bg-transparent text-sm text-gray-800 placeholder-gray-400 focus:outline-none min-w-0"
                       />
+
+                      {/* Upload Image for Option Button (if not true_false) */}
+                      {q.type !== 'true_false' && (
+                        <label
+                          className={`p-1.5 rounded-lg cursor-pointer transition shrink-0 ${
+                            opt.media_url
+                              ? 'text-purple-600 bg-purple-50 hover:bg-purple-100'
+                              : 'text-gray-400 hover:text-purple-600 hover:bg-purple-50'
+                          }`}
+                          title={opt.media_url ? 'Replace option image' : 'Upload option image'}
+                        >
+                          {uploadingOpt?.qIdx === qIdx && uploadingOpt?.optIdx === optIdx ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-purple-600" />
+                          ) : (
+                            <Image className="w-4 h-4" />
+                          )}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            disabled={uploadingOpt?.qIdx === qIdx && uploadingOpt?.optIdx === optIdx}
+                            className="hidden"
+                            onChange={(e) => {
+                              if (e.target.files?.[0]) {
+                                handleOptionImageUpload(qIdx, optIdx, e.target.files[0]);
+                              }
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                      )}
 
                       {q.type === 'mcq' && q.options.length > 2 && (
                         <button
                           type="button"
                           onClick={() => handleRemoveOption(qIdx, optIdx)}
-                          className="p-1 text-gray-400 hover:text-red-500 transition"
+                          className="p-1 text-gray-400 hover:text-red-500 transition shrink-0"
                           title="Remove option"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

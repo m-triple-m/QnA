@@ -21,7 +21,8 @@ function RootRedirect() {
   const { user, loading } = useAuth();
   if (loading) return <Spinner />;
   if (!user) return <Navigate to="/login" replace />;
-  if (user.role === 'admin') return <Navigate to="/admin" replace />;
+  const role = user.role || user.user?.role;
+  if (role === 'admin') return <Navigate to="/admin" replace />;
   return <Navigate to="/host" replace />;
 }
 

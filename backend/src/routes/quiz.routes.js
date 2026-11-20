@@ -15,17 +15,20 @@ router.use(authenticate, requireRole('host'));
 // --- Schemas ---
 
 const optionSchema = Joi.object({
-  text: Joi.string().required(),
+  id: Joi.number().optional(),
+  text: Joi.string().allow('', null).optional().default(''),
+  media_url: Joi.string().allow(null, '').optional(),
   is_correct: Joi.boolean().default(false),
 });
 
 const questionSchema = Joi.object({
+  id: Joi.number().optional(),
   text: Joi.string().required(),
   type: Joi.string().valid('mcq', 'true_false', 'short_answer', 'poll').default('mcq'),
   time_limit_sec: Joi.number().integer().min(5).max(120).default(30),
   points: Joi.number().integer().min(0).max(1000).default(10),
   order_index: Joi.number().integer().required(),
-  media_url: Joi.string().uri().allow(null, '').optional(),
+  media_url: Joi.string().allow(null, '').optional(),
   options: Joi.array().items(optionSchema).optional(),
 });
 

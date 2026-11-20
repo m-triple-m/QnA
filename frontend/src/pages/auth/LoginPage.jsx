@@ -46,13 +46,18 @@ export default function LoginPage() {
       </div>
 
       <div className="relative w-full max-w-md">
-        {/* Logo */}
+        {/* Logo & Branding */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-2xl shadow-xl mb-4">
-            <Zap className="w-9 h-9 text-purple-600" />
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-white rounded-3xl shadow-2xl p-3 mb-4 border border-purple-100/50">
+            <img src="/digipodium-logo.png" alt="Digipodium Logo" className="w-full h-full object-contain" />
           </div>
           <h1 className="text-4xl font-extrabold text-white tracking-tight">QuizLive</h1>
-          <p className="text-purple-200 mt-1">The ultimate live quiz experience</p>
+          <p className="text-xs font-semibold text-purple-200 mt-1 flex items-center justify-center gap-1.5 uppercase tracking-wider">
+            <span>powered by</span>
+            <span className="text-white font-extrabold tracking-widest bg-white/15 px-2.5 py-0.5 rounded-full border border-white/20">
+              Digipodium
+            </span>
+          </p>
         </div>
 
         {/* Card */}

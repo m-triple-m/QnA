@@ -38,15 +38,15 @@ export default function HostLayout() {
       {/* SIDEBAR FOR DESKTOP */}
       <aside className="hidden md:flex flex-col w-64 bg-white border-r border-gray-100 p-6 z-20">
         {/* Brand */}
-        <div className="flex items-center gap-3 mb-10 px-2">
-          <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center text-white shadow-md shadow-purple-200">
-            <Zap className="w-6 h-6" />
+        <div className="flex items-center gap-3 mb-8 px-2">
+          <div className="w-11 h-11 rounded-2xl bg-white border border-gray-100 flex items-center justify-center p-1.5 shadow-sm">
+            <img src="/digipodium-logo.png" alt="Digipodium Logo" className="w-full h-full object-contain" />
           </div>
           <div>
-            <h1 className="font-extrabold text-xl text-gray-800 tracking-tight">QuizLive</h1>
-            <span className="text-[10px] font-bold uppercase tracking-wider bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
-              Host Portal
-            </span>
+            <h1 className="font-extrabold text-xl text-gray-900 tracking-tight leading-none">QuizLive</h1>
+            <p className="text-[10px] font-semibold text-gray-500 tracking-tight mt-0.5">
+              by <span className="font-bold text-red-600">Digipodium</span>
+            </p>
           </div>
         </div>
 
@@ -105,11 +105,12 @@ export default function HostLayout() {
           />
           <div className="relative w-72 bg-white h-full p-6 flex flex-col z-10 shadow-2xl">
             <div className="flex items-center justify-between mb-8">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-purple-600 flex items-center justify-center text-white">
-                  <Zap className="w-5 h-5" />
+              <div className="flex items-center gap-2.5">
+                <img src="/digipodium-logo.png" alt="Digipodium Logo" className="w-8 h-8 object-contain" />
+                <div>
+                  <span className="font-extrabold text-lg text-gray-900 leading-none block">QuizLive</span>
+                  <span className="text-[10px] text-gray-500 font-semibold block">by Digipodium</span>
                 </div>
-                <span className="font-extrabold text-lg text-gray-800">QuizLive</span>
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}

@@ -30,7 +30,12 @@ async function createQuiz(req, res) {
       if (Array.isArray(q.options)) {
         for (const opt of q.options) {
           await Option.create(
-            { question_id: question.id, text: opt.text, is_correct: opt.is_correct || false },
+            {
+              question_id: question.id,
+              text: opt.text || '',
+              media_url: opt.media_url || null,
+              is_correct: opt.is_correct || false,
+            },
             { transaction: t }
           );
         }
@@ -141,7 +146,12 @@ async function addQuestion(req, res) {
 
     for (const opt of options) {
       await Option.create(
-        { question_id: question.id, text: opt.text, is_correct: opt.is_correct || false },
+        {
+          question_id: question.id,
+          text: opt.text || '',
+          media_url: opt.media_url || null,
+          is_correct: opt.is_correct || false,
+        },
         { transaction: t }
       );
     }
@@ -170,10 +180,41 @@ async function updateQuestion(req, res) {
   if (!question) return res.status(404).json({ success: false, message: 'Question not found' });
   if (question.quiz.host_id !== req.user.id) return res.status(403).json({ success: false, message: 'Forbidden' });
 
-  const { text, type, time_limit_sec, points, order_index, media_url } = req.body;
-  await question.update({ text, type, time_limit_sec, points, order_index, media_url });
+  const { text, type, time_limit_sec, points, order_index, media_url, options } = req.body;
 
-  return res.status(200).json({ success: true, data: { question }, message: 'Question updated' });
+  const t = await sequelize.transaction();
+  try {
+    await question.update(
+      { text, type, time_limit_sec, points, order_index, media_url: media_url || null },
+      { transaction: t }
+    );
+
+    if (Array.isArray(options)) {
+      await Option.destroy({ where: { question_id: question.id }, transaction: t });
+      for (const opt of options) {
+        await Option.create(
+          {
+            question_id: question.id,
+            text: opt.text || '',
+            media_url: opt.media_url || null,
+            is_correct: opt.is_correct || false,
+          },
+          { transaction: t }
+        );
+      }
+    }
+
+    await t.commit();
+
+    const updated = await Question.findByPk(question.id, {
+      include: [{ model: Option, as: 'options' }],
+    });
+
+    return res.status(200).json({ success: true, data: { question: updated }, message: 'Question updated' });
+  } catch (err) {
+    await t.rollback();
+    throw err;
+  }
 }
 
 /**

@@ -28,6 +28,7 @@ async function testConnection() {
     try {
       await sequelize.authenticate();
       logger.info('Database connection established successfully.');
+      await ensureSchemaUpdates();
       return;
     } catch (err) {
       logger.warn(`DB connection attempt ${attempt}/${MAX_RETRIES} failed: ${err.message}`);
@@ -37,6 +38,24 @@ async function testConnection() {
       }
       await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }
+  }
+}
+
+/**
+ * Ensure database table columns are aligned with newest features.
+ */
+async function ensureSchemaUpdates() {
+  try {
+    const [cols] = await sequelize.query("SHOW COLUMNS FROM `options` LIKE 'media_url'");
+    if (!cols || cols.length === 0) {
+      await sequelize.query("ALTER TABLE `options` ADD COLUMN `media_url` VARCHAR(500) NULL DEFAULT NULL AFTER `text`");
+      logger.info("Migrated 'options' table: added 'media_url' column.");
+    }
+    // Ensure text column allows empty strings or NULL
+    await sequelize.query("ALTER TABLE `options` MODIFY COLUMN `text` VARCHAR(500) NULL DEFAULT ''");
+  } catch (err) {
+    // If table doesn't exist yet, sync will create it
+    logger.debug(`Schema migration check note: ${err.message}`);
   }
 }
 

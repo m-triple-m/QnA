@@ -43,31 +43,35 @@ async function createSession(req, res) {
  * GET /sessions/:code/join  — public join info
  */
 async function getJoinInfo(req, res) {
+  const code = (req.params.code || '').trim().toUpperCase();
+
   const session = await Session.findOne({
-    where: { code: req.params.code.toUpperCase() },
+    where: { code },
     include: [
       {
         model: Quiz,
         as: 'quiz',
         include: [{ model: User, as: 'host', attributes: ['id', 'name'] }],
       },
-      { model: Participant, as: 'participants', attributes: [] },
     ],
-    attributes: {
-      include: [[sequelize.fn('COUNT', sequelize.col('participants.id')), 'participant_count']],
-    },
-    group: ['Session.id', 'quiz.id', 'quiz->host.id'],
   });
 
-  if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
-  if (session.status === 'ended') return res.status(400).json({ success: false, message: 'Session has ended' });
+  if (!session) {
+    return res.status(404).json({ success: false, message: 'Session not found. Please check your PIN.' });
+  }
+
+  if (session.status === 'ended') {
+    return res.status(400).json({ success: false, message: 'This quiz session has already ended.' });
+  }
+
+  const participant_count = await Participant.count({ where: { session_id: session.id } });
 
   return res.status(200).json({
     success: true,
     data: {
-      quiz_title: session.quiz.title,
-      host_name: session.quiz.host.name,
-      participant_count: parseInt(session.getDataValue('participant_count') || 0, 10),
+      quiz_title: session.quiz?.title || 'Live Quiz',
+      host_name: session.quiz?.host?.name || 'Quiz Master',
+      participant_count,
       status: session.status,
       code: session.code,
     },

@@ -44,8 +44,9 @@ export default function JoinPage() {
     setError('');
     try {
       const res = await getJoinInfo(trimmed);
-      const data = res.data?.data || res.data;
-      if (data) {
+      // Support both unwrapped object and axios response
+      const data = res?.quiz_title ? res : (res?.data?.data || res?.data || res);
+      if (data && data.quiz_title) {
         if (data.status === 'ended') {
           setError('This quiz session has already ended.');
           toast.error('This quiz has already ended');
@@ -54,9 +55,12 @@ export default function JoinPage() {
           setQuizInfo(data);
           toast.success(`Found "${data.quiz_title}"!`);
         }
+      } else {
+        setError('Quiz not found. Please check your PIN.');
+        setQuizInfo(null);
       }
     } catch (err) {
-      const msg = err.response?.data?.message || 'Quiz not found. Please check your code.';
+      const msg = err.response?.data?.message || 'Quiz not found. Please check your PIN.';
       setError(msg);
       toast.error(msg);
       setQuizInfo(null);
@@ -91,13 +95,18 @@ export default function JoinPage() {
     <div className="min-h-screen bg-gradient-to-br from-purple-700 via-indigo-800 to-slate-900 flex flex-col justify-between items-center p-4 sm:p-6 text-white select-none">
       {/* Top Bar / Brand Header */}
       <header className="w-full max-w-md flex justify-between items-center pt-2 sm:pt-4">
-        <Link to="/" className="flex items-center gap-2 group">
-          <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shadow-lg group-hover:scale-105 transition">
-            <Gamepad2 className="w-6 h-6 text-yellow-300" />
+        <Link to="/" className="flex items-center gap-2.5 group">
+          <div className="w-10 h-10 rounded-2xl bg-white/90 backdrop-blur-md flex items-center justify-center p-1.5 shadow-lg group-hover:scale-105 transition">
+            <img src="/digipodium-logo.png" alt="Digipodium Logo" className="w-full h-full object-contain" />
           </div>
-          <span className="font-black text-2xl tracking-tight bg-gradient-to-r from-yellow-300 via-pink-400 to-purple-200 bg-clip-text text-transparent">
-            QuizLive
-          </span>
+          <div>
+            <span className="font-black text-xl tracking-tight text-white block leading-none">
+              QuizLive
+            </span>
+            <span className="text-[10px] font-semibold text-purple-200/80 block mt-0.5">
+              by Digipodium
+            </span>
+          </div>
         </Link>
         <span className="text-xs uppercase font-bold tracking-widest text-purple-200/70 bg-white/10 px-3 py-1 rounded-full">
           Participant

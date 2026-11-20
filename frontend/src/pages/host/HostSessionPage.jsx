@@ -9,6 +9,10 @@ import {
 } from 'lucide-react';
 import { useSocketContext } from '@/contexts/SocketContext';
 import { exportSessionResults } from '@/api/endpoints';
+import sound from '@/lib/sound';
+import SoundToggle from '@/components/SoundToggle';
+import ParticipantMiniScreen from '@/components/ParticipantMiniScreen';
+import { getMediaUrl } from '@/lib/utils';
 
 // Kahoot geometric shape themes
 const OPTION_STYLES = [
@@ -19,53 +23,6 @@ const OPTION_STYLES = [
   { bg: 'bg-purple-500 hover:bg-purple-600', ring: 'ring-purple-400', light: 'bg-purple-50 text-purple-700', shape: '★', colorName: 'Purple' },
   { bg: 'bg-pink-500 hover:bg-pink-600', ring: 'ring-pink-400', light: 'bg-pink-50 text-pink-700', shape: '✦', colorName: 'Pink' },
 ];
-
-// Web Audio API sounds without external dependencies
-function playSound(type, muted) {
-  if (muted || typeof window === 'undefined') return;
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    if (type === 'tick') {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(800, ctx.currentTime);
-      gain.gain.setValueAtTime(0.05, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.08);
-    } else if (type === 'reveal') {
-      [523.25, 659.25, 783.99].forEach((freq, idx) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.08);
-        gain.gain.setValueAtTime(0.1, ctx.currentTime + idx * 0.08);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.08 + 0.4);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(ctx.currentTime + idx * 0.08);
-        osc.stop(ctx.currentTime + idx * 0.08 + 0.45);
-      });
-    } else if (type === 'join') {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(440, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15);
-      gain.gain.setValueAtTime(0.08, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.2);
-    }
-  } catch {
-    // AudioContext blocked or unsupported
-  }
-}
 
 export default function HostSessionPage() {
   const { id: sessionId } = useParams();
@@ -88,11 +45,27 @@ export default function HostSessionPage() {
   const [isSlideMode, setIsSlideMode] = useState(true);
   const [showSlideLeaderboard, setShowSlideLeaderboard] = useState(false);
   const [showQROverlay, setShowQROverlay] = useState(false);
+  const [showMiniScreen, setShowMiniScreen] = useState(false);
   const [soundMuted, setSoundMuted] = useState(false);
   const [optionVotes, setOptionVotes] = useState({}); // { [optionId]: count }
+  const [autoReveal, setAutoReveal] = useState(() => {
+    return localStorage.getItem('quizlive_auto_reveal') === 'true';
+  });
 
   const timerRef = useRef(null);
   const containerRef = useRef(null);
+
+  const isAnswerRevealed = Boolean(timeUpData?.correctOptions?.length);
+  const isVotingClosed = timeRemaining === 0 || Boolean(timeUpData?.votingClosed) || isAnswerRevealed;
+
+  const toggleAutoReveal = () => {
+    const nextVal = !autoReveal;
+    setAutoReveal(nextVal);
+    localStorage.setItem('quizlive_auto_reveal', String(nextVal));
+    const socket = getSocket();
+    socket.emit('host:set_auto_reveal', { sessionId: Number(sessionId), autoReveal: nextVal });
+    toast.success(nextVal ? 'Auto-Reveal Answer: Enabled' : 'Manual Reveal: Enabled');
+  };
 
   // Toggle browser Fullscreen
   const toggleFullscreen = () => {
@@ -120,6 +93,7 @@ export default function HostSessionPage() {
 
     // Join room
     socket.emit('host:join_session', { token, sessionId: Number(sessionId) });
+    socket.emit('host:set_auto_reveal', { sessionId: Number(sessionId), autoReveal });
 
     // Handle initial state
     socket.on('session:state', ({ session: initialSession, participants: initialParticipants }) => {
@@ -128,20 +102,29 @@ export default function HostSessionPage() {
     });
 
     // Participant joined
-    socket.on('session:participant_joined', ({ nickname }) => {
+    socket.on('session:participant_joined', (data) => {
+      const name = data.nickname || data;
       setParticipants((prev) => {
-        if (prev.some((p) => p.nickname === nickname)) return prev;
-        return [...prev, { nickname, score: 0 }];
+        if (prev.some((p) => p.nickname === name)) return prev;
+        return [
+          ...prev,
+          {
+            id: data.participantId,
+            nickname: name,
+            score: data.score || 0,
+            hasVoted: false,
+          },
+        ];
       });
-      playSound('join', soundMuted);
-      toast.success(`${nickname} joined!`, { duration: 2500, position: 'bottom-right' });
+      sound.play('join');
+      toast.success(`${name} joined!`, { duration: 2500, position: 'bottom-right' });
     });
 
     // Quiz started
     socket.on('session:started', () => {
       setSession((prev) => (prev ? { ...prev, status: 'live' } : prev));
       setShowSlideLeaderboard(false);
-      playSound('reveal', soundMuted);
+      sound.play('start');
     });
 
     // Next question received
@@ -154,6 +137,11 @@ export default function HostSessionPage() {
       setShowSlideLeaderboard(false);
       setOptionVotes({});
 
+      // Reset each participant's vote status for this new question
+      setParticipants((prev) =>
+        prev.map((p) => ({ ...p, hasVoted: false, timeTakenMs: null }))
+      );
+
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = setInterval(() => {
         setTimeRemaining((prev) => {
@@ -162,31 +150,60 @@ export default function HostSessionPage() {
             return 0;
           }
           if (prev <= 6) {
-            playSound('tick', soundMuted);
+            sound.play('urgentTick');
+          } else {
+            sound.play('tick');
           }
           return prev - 1;
         });
       }, 1000);
     });
 
-    // Participant answer with live option voting count
-    socket.on('session:answer_received', ({ optionId, isCorrect }) => {
+    // Participant answer with live option voting count and roster update
+    socket.on('session:answer_received', (data) => {
       setAnswersCount((prev) => prev + 1);
-      if (isCorrect) setCorrectCount((prev) => prev + 1);
-      if (optionId) {
+      if (data.isCorrect) setCorrectCount((prev) => prev + 1);
+      if (data.optionId) {
         setOptionVotes((prev) => ({
           ...prev,
-          [optionId]: (prev[optionId] || 0) + 1,
+          [data.optionId]: (prev[data.optionId] || 0) + 1,
         }));
       }
+
+      // Mark this participant as voted in the live roster
+      setParticipants((prev) =>
+        prev.map((p) => {
+          if (
+            (data.participantId && p.id === data.participantId) ||
+            (data.nickname && p.nickname === data.nickname)
+          ) {
+            return {
+              ...p,
+              hasVoted: true,
+              timeTakenMs: data.timeTakenMs || p.timeTakenMs,
+              score: data.score !== undefined ? data.score : p.score,
+            };
+          }
+          return p;
+        })
+      );
     });
 
-    // Time Up
+    // Time Up / Voting Closed
     socket.on('session:time_up', (data) => {
       if (timerRef.current) clearInterval(timerRef.current);
       setTimeRemaining(0);
       setTimeUpData(data);
-      playSound('reveal', soundMuted);
+      sound.play('timeUp');
+    });
+
+    // Answer Revealed
+    socket.on('session:answer_revealed', (data) => {
+      setTimeUpData((prev) => ({
+        ...prev,
+        ...data,
+      }));
+      sound.play('correct');
     });
 
     // Leaderboard update
@@ -200,7 +217,7 @@ export default function HostSessionPage() {
       setSession((prev) => (prev ? { ...prev, status: 'ended' } : prev));
       setFinalResults(finalLeaderboard || []);
       setShowSlideLeaderboard(true);
-      playSound('reveal', soundMuted);
+      sound.play('fanfare');
     });
 
     // Errors
@@ -216,17 +233,17 @@ export default function HostSessionPage() {
       socket.off('session:question');
       socket.off('session:answer_received');
       socket.off('session:time_up');
+      socket.off('session:answer_revealed');
       socket.off('session:leaderboard');
       socket.off('session:ended');
       socket.off('error');
     };
-  }, [sessionId, getSocket, navigate, soundMuted]);
+  }, [sessionId, getSocket, navigate, soundMuted, autoReveal]);
 
   // Host Actions
   const handleStartQuiz = useCallback(() => {
     const socket = getSocket();
     socket.emit('host:start_session', { sessionId: Number(sessionId) });
-    socket.emit('host:next_question', { sessionId: Number(sessionId), questionIndex: 0 });
   }, [getSocket, sessionId]);
 
   const handleRevealAnswer = useCallback(() => {
@@ -261,8 +278,8 @@ export default function HostSessionPage() {
         if (!session?.status || session?.status === 'waiting') {
           if (participants.length > 0) handleStartQuiz();
         } else if (session?.status === 'live') {
-          if (!timeUpData) {
-            handleRevealAnswer(); // reveal answers early
+          if (!isAnswerRevealed) {
+            handleRevealAnswer(); // reveal answers
           } else if (!showSlideLeaderboard && leaderboard.length > 0) {
             setShowSlideLeaderboard(true); // show leaderboard slide
           } else {
@@ -275,8 +292,10 @@ export default function HostSessionPage() {
         setShowSlideLeaderboard((prev) => !prev);
       } else if (e.key === 'q' || e.key === 'Q') {
         setShowQROverlay((prev) => !prev);
+      } else if (e.key === 'p' || e.key === 'P') {
+        setShowMiniScreen((prev) => !prev);
       } else if (e.key === 'm' || e.key === 'M') {
-        setSoundMuted((prev) => !prev);
+        sound.toggle();
       }
     };
 
@@ -346,6 +365,17 @@ export default function HostSessionPage() {
             <span className="hidden sm:inline">Exit</span>
           </button>
 
+          {/* Digipodium Brand Pill */}
+          <div className="hidden lg:flex items-center gap-2 pl-3 border-l border-white/10">
+            <div className="w-7 h-7 rounded-lg bg-white flex items-center justify-center p-1 shadow">
+              <img src="/digipodium-logo.png" alt="Digipodium Logo" className="w-full h-full object-contain" />
+            </div>
+            <div>
+              <span className="font-extrabold text-xs text-white leading-none block">QuizLive</span>
+              <span className="text-[9px] text-gray-400 font-medium block">by Digipodium</span>
+            </div>
+          </div>
+
           {/* Session PIN & Join URL */}
           {session?.code && (
             <div className="flex items-center gap-2">
@@ -402,17 +432,40 @@ export default function HostSessionPage() {
 
         {/* Right Action Icons */}
         <div className="flex items-center gap-2">
-          {/* Audio toggle */}
+          {/* Audio sound effects toggle */}
+          <SoundToggle isDark={isSlideMode} />
+
+          {/* Auto-Reveal toggle */}
           <button
-            onClick={() => setSoundMuted((m) => !m)}
-            className={`p-2 rounded-xl transition ${
-              isSlideMode
-                ? 'bg-white/10 hover:bg-white/20 text-gray-300'
+            onClick={toggleAutoReveal}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm ${
+              autoReveal
+                ? 'bg-emerald-600/80 hover:bg-emerald-600 text-white border border-emerald-400/40'
+                : 'bg-amber-600/30 hover:bg-amber-600/40 text-amber-300 border border-amber-400/30'
+            }`}
+            title="When disabled, host manually clicks 'Reveal Answer' on each slide after time runs out"
+          >
+            <Radio className="w-3.5 h-3.5" />
+            <span>{autoReveal ? 'Auto Reveal' : 'Manual Reveal'}</span>
+          </button>
+
+          {/* Mini Screen / Live Roster Toggle */}
+          <button
+            onClick={() => setShowMiniScreen((v) => !v)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm ${
+              showMiniScreen
+                ? 'bg-purple-600 text-white shadow-purple-900/50'
+                : isSlideMode
+                ? 'bg-white/10 hover:bg-white/20 text-gray-200'
                 : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
             }`}
-            title={soundMuted ? 'Unmute Sound Effects' : 'Mute Sound Effects'}
+            title="Toggle Live Roster & Vote Status Mini Screen (Key: P)"
           >
-            {soundMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
+            <Users className="w-3.5 h-3.5 text-purple-400" />
+            <span>Roster</span>
+            <span className="text-[10px] bg-white/20 px-1.5 py-0.2 rounded-full font-mono">
+              {participants.filter((p) => p.hasVoted).length}/{participants.length}
+            </span>
           </button>
 
           {/* Quick QR popover toggle */}
@@ -505,12 +558,17 @@ export default function HostSessionPage() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
               {/* Left Column: Giant QR & Stage Invite */}
               <div className="lg:col-span-5 flex flex-col items-center text-center p-4 lg:border-r border-white/10">
-                <span className="inline-block px-4 py-1.5 rounded-full text-xs font-extrabold uppercase tracking-widest bg-purple-500/20 text-purple-300 border border-purple-500/30 mb-4 animate-pulse">
-                  Live Quiz Lobby
-                </span>
+                <div className="flex items-center gap-2 mb-3 px-3 py-1 rounded-full bg-white/10 border border-white/10 shadow-sm">
+                  <div className="w-5 h-5 rounded-md bg-white flex items-center justify-center p-0.5">
+                    <img src="/digipodium-logo.png" alt="Digipodium Logo" className="w-full h-full object-contain" />
+                  </div>
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-purple-200">
+                    QuizLive <span className="opacity-75 font-medium lowercase">powered by</span> Digipodium
+                  </span>
+                </div>
                 <h1 className="text-4xl sm:text-5xl font-black tracking-tight mb-3">Join The Game!</h1>
                 <p className="text-gray-400 text-sm sm:text-base max-w-xs mb-6">
-                  Scan the QR code on your phone or go to <strong className="text-white">quizlive.com</strong>
+                  Scan the QR code on your phone or enter the PIN to join
                 </p>
 
                 {/* QR Code Container with subtle ambient glow */}
@@ -680,9 +738,9 @@ export default function HostSessionPage() {
               {currentQuestion.media_url && (
                 <div className="flex justify-center mb-6">
                   <img
-                    src={currentQuestion.media_url}
+                    src={getMediaUrl(currentQuestion.media_url)}
                     alt="Question visual"
-                    className="max-h-72 sm:max-h-80 rounded-2xl object-contain shadow-2xl border border-white/10"
+                    className="max-h-72 sm:max-h-80 rounded-2xl object-contain shadow-2xl border border-white/10 bg-black/20"
                   />
                 </div>
               )}
@@ -691,7 +749,7 @@ export default function HostSessionPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
                 {currentQuestion.options?.map((opt, i) => {
                   const style = OPTION_STYLES[i % OPTION_STYLES.length];
-                  const isCorrect = timeUpData?.correctOptions?.some((co) => co.id === opt.id);
+                  const isCorrect = isAnswerRevealed && timeUpData?.correctOptions?.some((co) => co.id === opt.id);
                   const votes = optionVotes[opt.id] || 0;
                   const votePercent =
                     answersCount > 0 ? Math.round((votes / answersCount) * 100) : 0;
@@ -699,8 +757,8 @@ export default function HostSessionPage() {
                   return (
                     <div
                       key={opt.id || i}
-                      className={`relative p-6 rounded-3xl overflow-hidden font-bold text-xl sm:text-2xl shadow-lg transition-all duration-300 flex flex-col justify-between min-h-[110px] ${
-                        timeUpData
+                      className={`relative p-6 rounded-3xl overflow-hidden font-bold text-xl sm:text-2xl shadow-lg transition-all duration-300 flex flex-col justify-between min-h-[120px] ${
+                        isAnswerRevealed
                           ? isCorrect
                             ? 'ring-4 ring-emerald-400 bg-emerald-500 text-white scale-[1.02] shadow-emerald-900/50'
                             : 'opacity-35 bg-slate-800 text-gray-400 scale-[0.98]'
@@ -721,16 +779,27 @@ export default function HostSessionPage() {
                           <span className="w-10 h-10 rounded-2xl bg-black/20 flex items-center justify-center font-black text-xl shrink-0">
                             {style.shape}
                           </span>
-                          <span className="leading-snug">{opt.text}</span>
+                          {opt.text && <span className="leading-snug">{opt.text}</span>}
                         </div>
 
                         {/* Status Checkmark when Answer Revealed */}
-                        {timeUpData && isCorrect && (
+                        {isAnswerRevealed && isCorrect && (
                           <div className="bg-white text-emerald-600 rounded-full p-1.5 shadow-md shrink-0">
                             <CheckCircle2 className="w-7 h-7" />
                           </div>
                         )}
                       </div>
+
+                      {/* Option Image if attached */}
+                      {opt.media_url && (
+                        <div className="relative z-10 w-full h-32 sm:h-44 my-3 rounded-2xl overflow-hidden bg-black/25 flex items-center justify-center p-2 shadow-inner">
+                          <img
+                            src={getMediaUrl(opt.media_url)}
+                            alt={opt.text || `Option ${i + 1}`}
+                            className="w-full h-full object-contain rounded-xl"
+                          />
+                        </div>
+                      )}
 
                       {/* Bottom Row: Live Vote Count & Percentage Bar */}
                       <div className="relative z-10 flex items-center justify-between text-xs sm:text-sm font-extrabold uppercase tracking-wider mt-4 opacity-90">
@@ -747,24 +816,38 @@ export default function HostSessionPage() {
               {/* Bottom Presenter Toolbar */}
               <div className="mt-8 pt-6 border-t border-white/10 flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3 text-sm text-gray-400 font-semibold">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                  <div className={`w-2.5 h-2.5 rounded-full ${isVotingClosed ? 'bg-amber-400' : 'bg-emerald-400 animate-ping'}`} />
                   <span>
-                    Live Voting: {answersCount} of {totalPlayers} participants responded
+                    {isVotingClosed
+                      ? `Voting Closed: ${answersCount} of ${totalPlayers} responded`
+                      : `Live Voting: ${answersCount} of ${totalPlayers} participants responded`}
                   </span>
                 </div>
 
                 <div className="flex items-center gap-3">
-                  {/* Skip timer / Reveal Answer */}
-                  {!timeUpData ? (
+                  {!isVotingClosed ? (
+                    /* Voting is still open */
                     <button
                       onClick={handleRevealAnswer}
                       className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-2xl transition shadow-lg flex items-center gap-2 text-sm"
-                      title="Reveal Correct Answer Early (Key: Space)"
+                      title="Close voting and reveal answer early (Key: Space)"
                     >
                       <FastForward className="w-4 h-4 fill-current" />
+                      <span>Close & Reveal</span>
+                    </button>
+                  ) : !isAnswerRevealed ? (
+                    /* Voting closed, host decides when to reveal */
+                    <button
+                      onClick={handleRevealAnswer}
+                      className="px-6 py-3 bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-300 hover:to-orange-400 text-slate-950 font-black rounded-2xl transition shadow-xl shadow-amber-900/40 flex items-center gap-2 text-base animate-pulse"
+                      title="Reveal Correct Answer (Key: Space)"
+                    >
+                      <FastForward className="w-5 h-5 fill-current" />
                       <span>Reveal Answer</span>
+                      <span className="text-xs bg-black/20 px-2 py-0.5 rounded font-mono hidden sm:inline">Space</span>
                     </button>
                   ) : (
+                    /* Answer has been revealed */
                     <>
                       {/* Show Leaderboard Slide Button */}
                       <button
@@ -978,6 +1061,17 @@ export default function HostSessionPage() {
           </div>
         )}
       </main>
+
+      {/* Floating / Dockable Live Participant & Vote Status Mini Screen */}
+      <ParticipantMiniScreen
+        isOpen={showMiniScreen}
+        onClose={() => setShowMiniScreen(false)}
+        participants={participants}
+        currentQuestion={currentQuestion}
+        isVotingClosed={isVotingClosed}
+        leaderboard={leaderboard}
+        isHost={true}
+      />
     </div>
   );
 }

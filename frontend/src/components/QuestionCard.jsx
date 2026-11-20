@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Check, Send } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
+import { getMediaUrl } from '../lib/utils';
 
 // Kahoot-style vibrant colors for MCQs: red, blue, yellow, green
 const MCQ_COLORS = [
@@ -73,7 +74,7 @@ export default function QuestionCard({
       {question.media_url && (
         <div className="w-full max-h-56 mb-4 overflow-hidden rounded-2xl shadow-md flex justify-center bg-black/10">
           <img
-            src={question.media_url}
+            src={getMediaUrl(question.media_url)}
             alt="Question media"
             className="max-h-56 object-contain rounded-xl"
           />
@@ -109,19 +110,31 @@ export default function QuestionCard({
                   disabled={answered}
                   onClick={() => handleSelectOption(opt.id)}
                   className={`min-h-[72px] sm:min-h-[88px] rounded-2xl p-4 text-white font-bold text-lg sm:text-xl shadow-lg
-                    flex items-center justify-between text-left transition-all duration-200 cursor-pointer
+                    flex flex-col justify-between text-left transition-all duration-200 cursor-pointer
                     ${color.bg} ${isSelected ? color.selected + ' scale-[0.98] ring-offset-2' : ''}
                     ${answered && !isSelected ? 'opacity-40 grayscale-[20%]' : ''}
                     active:scale-95`}
                 >
-                  <span className="flex items-center gap-3">
-                    <span className="text-2xl opacity-80">{color.shape}</span>
-                    <span className="break-words leading-tight">{opt.text}</span>
-                  </span>
-                  {isSelected && (
-                    <span className="bg-white/20 p-2 rounded-full animate-bounce">
-                      <Check className="w-6 h-6 text-white" />
+                  <div className="w-full flex items-center justify-between">
+                    <span className="flex items-center gap-3">
+                      <span className="text-2xl opacity-80">{color.shape}</span>
+                      {opt.text && <span className="break-words leading-tight">{opt.text}</span>}
                     </span>
+                    {isSelected && (
+                      <span className="bg-white/20 p-2 rounded-full animate-bounce shrink-0">
+                        <Check className="w-6 h-6 text-white" />
+                      </span>
+                    )}
+                  </div>
+
+                  {opt.media_url && (
+                    <div className="w-full h-28 sm:h-32 mt-2 rounded-xl overflow-hidden bg-black/20 flex items-center justify-center p-1">
+                      <img
+                        src={getMediaUrl(opt.media_url)}
+                        alt={opt.text || `Option ${idx + 1}`}
+                        className="w-full h-full object-contain rounded-lg"
+                      />
+                    </div>
                   )}
                 </button>
               );
@@ -200,9 +213,18 @@ export default function QuestionCard({
                     ${isChecked ? 'border-purple-600 bg-purple-50 text-purple-900 shadow-md' : 'border-gray-200 bg-white text-gray-800 hover:border-purple-300'}
                     ${answered ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
                 >
-                  <span>{opt.text}</span>
+                  <div className="flex items-center gap-3">
+                    {opt.media_url && (
+                      <img
+                        src={getMediaUrl(opt.media_url)}
+                        alt={opt.text || 'Poll option'}
+                        className="w-12 h-12 object-cover rounded-lg border border-gray-200"
+                      />
+                    )}
+                    <span>{opt.text}</span>
+                  </div>
                   <div
-                    className={`w-6 h-6 rounded border flex items-center justify-center transition
+                    className={`w-6 h-6 rounded border flex items-center justify-center transition shrink-0 ml-3
                       ${isChecked ? 'bg-purple-600 border-purple-600 text-white' : 'border-gray-400 bg-white'}`}
                   >
                     {isChecked && <Check className="w-4 h-4" />}

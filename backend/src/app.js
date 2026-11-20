@@ -8,6 +8,7 @@ const compression = require('compression');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const fs = require('fs');
 
 const { CLIENT_URL, NODE_ENV } = require('./config/env');
 const logger = require('./config/logger');
@@ -15,7 +16,11 @@ const logger = require('./config/logger');
 const app = express();
 
 // ── Security & compression ────────────────────────────────────────────────────
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
 app.use(compression());
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
@@ -50,7 +55,37 @@ app.use('/api/sessions', require('./routes/session.routes'));
 app.use('/api/admin', require('./routes/admin.routes'));
 app.use('/api/upload', require('./routes/upload.routes'));
 
-// ── 404 handler ───────────────────────────────────────────────────────────────
+// ── Frontend Static Assets & SPA Catch-All ─────────────────────────────────────
+const candidateDistPaths = [
+  path.join(__dirname, '../../frontend/dist'),
+  path.join(process.cwd(), '../frontend/dist'),
+  path.join(process.cwd(), 'dist'),
+  path.join(process.cwd(), 'public_html'),
+  path.join(process.cwd(), 'public'),
+];
+
+let frontendDistPath = null;
+for (const cand of candidateDistPaths) {
+  if (fs.existsSync(path.join(cand, 'index.html'))) {
+    frontendDistPath = cand;
+    break;
+  }
+}
+
+if (frontendDistPath) {
+  logger.info(`Serving built frontend from: ${frontendDistPath}`);
+  app.use(express.static(frontendDistPath));
+
+  // Forward all non-API GET requests to index.html for React Router SPA
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path.startsWith('/socket.io')) {
+      return next();
+    }
+    res.sendFile(path.join(frontendDistPath, 'index.html'));
+  });
+}
+
+// ── 404 handler (for unmatched API or static routes) ───────────────────────────
 app.use((_req, res) => {
   res.status(404).json({ success: false, message: 'Route not found.' });
 });

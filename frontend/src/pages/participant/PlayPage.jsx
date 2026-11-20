@@ -3,7 +3,11 @@ import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useSocketContext } from '../../contexts/SocketContext';
 import QuestionCard from '../../components/QuestionCard';
 import Leaderboard from '../../components/Leaderboard';
+import ParticipantMiniScreen from '../../components/ParticipantMiniScreen';
 import Timer from '../../components/Timer';
+import SoundToggle from '../../components/SoundToggle';
+import sound from '../../lib/sound';
+import { getMediaUrl } from '../../lib/utils';
 import { Sparkles, Trophy, Users, Award, CheckCircle2, XCircle, Gamepad2, AlertTriangle, ArrowLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -45,6 +49,8 @@ export default function PlayPage() {
   const [totalScore, setTotalScore] = useState(0);
   const [leaderboardData, setLeaderboardData] = useState([]);
   const [finalResult, setFinalResult] = useState(null);
+  const [joinError, setJoinError] = useState('');
+  const [showMiniScreen, setShowMiniScreen] = useState(false);
 
   // If no nickname, redirect to join page
   useEffect(() => {
@@ -58,12 +64,17 @@ export default function PlayPage() {
     if (!sessionCode || !nickname) return;
 
     const socket = getSocket();
-    if (!socket.connected) {
-      socket.connect();
-    }
 
-    // Join the session
-    socket.emit('participant:join', { sessionCode, nickname });
+    const doJoin = () => {
+      socket.emit('participant:join', { sessionCode, nickname });
+    };
+
+    if (socket.connected) {
+      doJoin();
+    } else {
+      socket.connect();
+      socket.once('connect', doJoin);
+    }
 
     // 1. Session Joined / Waiting Room
     const handleJoined = (data) => {
@@ -77,19 +88,19 @@ export default function PlayPage() {
       }
       if (data.quizTitle) setQuizTitle(data.quizTitle);
       sessionStorage.setItem(`nickname_${sessionCode}`, nickname);
-
-      if (data.status === 'waiting') {
-        setPhase('waiting');
-      }
+      setJoinError('');
+      setPhase('waiting');
     };
 
     // 2. Session Started Animation
     const handleStarted = () => {
+      sound.play('start');
       setPhase('ready');
     };
 
     // 3. Question Pushed
     const handleQuestion = (qData) => {
+      sound.play('start');
       setCurrentQuestion(qData);
       setSelectedOptionId(null);
       setAnswered(false);
@@ -108,6 +119,9 @@ export default function PlayPage() {
             clearInterval(timerRef.current);
             return 0;
           }
+          if (prev <= 5) {
+            sound.play('urgentTick');
+          }
           return prev - 1;
         });
       }, 1000);
@@ -116,6 +130,11 @@ export default function PlayPage() {
     // 4. Answer Result (personal instant feedback)
     const handleAnswerResult = (res) => {
       setAnswerResult(res);
+      if (res.isCorrect) {
+        sound.play('correct');
+      } else {
+        sound.play('wrong');
+      }
       if (res.totalScore !== undefined) {
         setTotalScore(res.totalScore);
       }
@@ -127,6 +146,13 @@ export default function PlayPage() {
       setRemainingSeconds(0);
       setCorrectOptions(data.correctOptions || []);
       setPhase('timeup');
+      sound.play('timeUp');
+    };
+
+    // 5b. Answer Revealed (Host triggered manual reveal)
+    const handleAnswerRevealed = (data) => {
+      setCorrectOptions(data.correctOptions || []);
+      sound.play('correct');
     };
 
     // 6. Leaderboard Update
@@ -143,6 +169,7 @@ export default function PlayPage() {
         setLeaderboardData(data.finalLeaderboard);
       }
       setPhase('ended');
+      sound.play('fanfare');
     };
 
     // 8. Participant Count Update
@@ -154,7 +181,9 @@ export default function PlayPage() {
 
     // Error handling & Reconnect
     const handleError = (err) => {
-      toast.error(err.message || 'An error occurred');
+      const msg = err.message || 'An error occurred';
+      setJoinError(msg);
+      toast.error(msg);
     };
 
     const handleConnectError = () => {
@@ -171,6 +200,7 @@ export default function PlayPage() {
     socket.on('session:question', handleQuestion);
     socket.on('answer:result', handleAnswerResult);
     socket.on('session:time_up', handleTimeUp);
+    socket.on('session:answer_revealed', handleAnswerRevealed);
     socket.on('session:leaderboard', handleLeaderboard);
     socket.on('session:ended', handleEnded);
     socket.on('session:participant_joined', handleParticipantJoined);
@@ -185,6 +215,7 @@ export default function PlayPage() {
       socket.off('session:question', handleQuestion);
       socket.off('answer:result', handleAnswerResult);
       socket.off('session:time_up', handleTimeUp);
+      socket.off('session:answer_revealed', handleAnswerRevealed);
       socket.off('session:leaderboard', handleLeaderboard);
       socket.off('session:ended', handleEnded);
       socket.off('session:participant_joined', handleParticipantJoined);
@@ -198,6 +229,7 @@ export default function PlayPage() {
   const handleAnswer = ({ optionId, optionIds, textAnswer }) => {
     if (answered || !currentQuestion) return;
 
+    sound.play('click');
     setAnswered(true);
     if (optionId) setSelectedOptionId(optionId);
 
@@ -221,18 +253,27 @@ export default function PlayPage() {
     <div className="min-h-screen w-full bg-slate-900 text-white flex flex-col justify-between overflow-x-hidden select-none">
       {/* Top Header Bar */}
       <header className="w-full bg-slate-950/80 backdrop-blur-md border-b border-slate-800 px-4 py-3 flex items-center justify-between z-10">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-purple-600 flex items-center justify-center font-black text-sm">
-            Q
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-white flex items-center justify-center p-1 shadow shrink-0">
+            <img src="/digipodium-logo.png" alt="Digipodium Logo" className="w-full h-full object-contain" />
           </div>
           <div className="text-left">
-            <h1 className="text-sm font-bold truncate max-w-[150px] sm:max-w-xs">{quizTitle}</h1>
-            <p className="text-xs text-purple-400 font-medium">PIN: {sessionCode}</p>
+            <h1 className="text-sm font-bold truncate max-w-[150px] sm:max-w-xs leading-none">{quizTitle}</h1>
+            <p className="text-[10px] text-purple-300 font-medium mt-0.5">PIN: {sessionCode} · <span className="text-purple-400">by Digipodium</span></p>
           </div>
         </div>
 
-        {/* Current Score & Nickname */}
-        <div className="flex items-center gap-3">
+        {/* Current Score, Sound Toggle & Nickname */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          <button
+            onClick={() => setShowMiniScreen((v) => !v)}
+            className="px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition"
+            title="Open Mini Screen: Players & Leaderboard"
+          >
+            <Users className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden sm:inline">Roster</span>
+          </button>
+          <SoundToggle isDark={true} />
           <div className="px-3 py-1 rounded-full bg-purple-950/60 border border-purple-500/30 text-xs font-bold text-yellow-300 flex items-center gap-1.5">
             <Trophy className="w-3.5 h-3.5 text-yellow-400" />
             <span>{totalScore} pts</span>
@@ -247,12 +288,31 @@ export default function PlayPage() {
       <main className="flex-1 flex flex-col items-center justify-center p-4 relative">
         {/* Phase: Connecting */}
         {phase === 'connecting' && (
-          <div className="text-center space-y-4 animate-pulse">
-            <div className="w-16 h-16 rounded-3xl bg-purple-600/30 border border-purple-500 flex items-center justify-center mx-auto">
-              <Gamepad2 className="w-8 h-8 text-purple-300 animate-spin" />
-            </div>
-            <h2 className="text-xl font-bold">Connecting to Quiz...</h2>
-            <p className="text-sm text-slate-400">Hold on tight!</p>
+          <div className="text-center space-y-4 max-w-sm w-full mx-auto p-6">
+            {joinError ? (
+              <div className="space-y-4 bg-rose-500/10 border border-rose-500/30 rounded-3xl p-6 text-center animate-fade-in">
+                <div className="w-16 h-16 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+                  <AlertTriangle className="w-8 h-8" />
+                </div>
+                <h2 className="text-xl font-bold text-white">Could Not Join</h2>
+                <p className="text-sm text-rose-200">{joinError}</p>
+                <button
+                  onClick={() => navigate(`/join/${sessionCode}`)}
+                  className="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold transition flex items-center justify-center gap-2"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Back to Join</span>
+                </button>
+              </div>
+            ) : (
+              <div className="animate-pulse space-y-4">
+                <div className="w-16 h-16 rounded-3xl bg-purple-600/30 border border-purple-500 flex items-center justify-center mx-auto">
+                  <Gamepad2 className="w-8 h-8 text-purple-300 animate-spin" />
+                </div>
+                <h2 className="text-xl font-bold">Connecting to Quiz...</h2>
+                <p className="text-sm text-slate-400">Hold on tight!</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -400,13 +460,20 @@ export default function PlayPage() {
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-2">
                   Correct Answer:
                 </span>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {correctOptions.map((opt) => (
                     <div
                       key={opt.id}
-                      className="px-3.5 py-2 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 font-bold text-sm flex items-center gap-2"
+                      className="px-3.5 py-2.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 font-bold text-sm flex items-center gap-3"
                     >
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+                      {opt.media_url && (
+                        <img
+                          src={getMediaUrl(opt.media_url)}
+                          alt={opt.text || 'Correct option'}
+                          className="w-10 h-10 object-cover rounded-lg border border-emerald-500/50 bg-black/20"
+                        />
+                      )}
                       <span>{opt.text}</span>
                     </div>
                   ))}
@@ -550,6 +617,18 @@ export default function PlayPage() {
           animation: bounce-short 0.5s ease;
         }
       `}</style>
+
+      {/* Mini Screen for Participants & Leaderboard */}
+      <ParticipantMiniScreen
+        isOpen={showMiniScreen}
+        onClose={() => setShowMiniScreen(false)}
+        participants={leaderboardData.length > 0 ? leaderboardData : [{ nickname, score: totalScore, hasVoted: answered }]}
+        currentQuestion={currentQuestion}
+        isVotingClosed={phase === 'timeup' || phase === 'leaderboard' || phase === 'ended'}
+        leaderboard={leaderboardData}
+        isHost={false}
+        currentNickname={nickname}
+      />
     </div>
   );
 }

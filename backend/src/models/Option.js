@@ -22,10 +22,13 @@ Option.init(
     },
     text: {
       type: DataTypes.STRING(500),
-      allowNull: false,
-      validate: {
-        notEmpty: true,
-      },
+      allowNull: true,
+      defaultValue: '',
+    },
+    media_url: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+      defaultValue: null,
     },
     is_correct: {
       type: DataTypes.BOOLEAN,

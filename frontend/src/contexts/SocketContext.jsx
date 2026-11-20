@@ -9,7 +9,8 @@ export function SocketProvider({ children }) {
 
   const getSocket = () => {
     if (!socketRef.current) {
-      socketRef.current = io('/', { autoConnect: false, withCredentials: true });
+      const socketUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, '') || '/';
+      socketRef.current = io(socketUrl, { autoConnect: false, withCredentials: true });
       socketRef.current.on('connect', () => setConnected(true));
       socketRef.current.on('disconnect', () => setConnected(false));
     }
