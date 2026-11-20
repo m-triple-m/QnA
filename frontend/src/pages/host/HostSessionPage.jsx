@@ -5,7 +5,7 @@ import {
   Users, Play, ChevronRight, CheckCircle2, Trophy,
   Download, Copy, Check, ArrowLeft, AlertCircle, Clock, Loader2,
   Maximize2, Minimize2, QrCode, BarChart3, Volume2, VolumeX,
-  FastForward, Award, Sparkles, RefreshCw, X, Radio
+  FastForward, Award, Sparkles, RefreshCw, X, Radio, Cloud, LayoutGrid
 } from 'lucide-react';
 import { useSocketContext } from '@/contexts/SocketContext';
 import { exportSessionResults } from '@/api/endpoints';
@@ -13,6 +13,7 @@ import sound from '@/lib/sound';
 import SoundToggle from '@/components/SoundToggle';
 import ParticipantMiniScreen from '@/components/ParticipantMiniScreen';
 import HostParticipantSidebar from '@/components/HostParticipantSidebar';
+import InteractiveWordCloud from '@/components/InteractiveWordCloud';
 import { getMediaUrl } from '@/lib/utils';
 
 // Kahoot geometric shape themes
@@ -52,6 +53,10 @@ export default function HostSessionPage() {
   });
   const [soundMuted, setSoundMuted] = useState(false);
   const [optionVotes, setOptionVotes] = useState({}); // { [optionId]: count }
+  const [submittedAnswers, setSubmittedAnswers] = useState([]); // array of answers for active question
+  const [answerViewMode, setAnswerViewMode] = useState(() => {
+    return localStorage.getItem('quizlive_answer_view_mode') || 'grid';
+  });
   const [autoReveal, setAutoReveal] = useState(() => {
     return localStorage.getItem('quizlive_auto_reveal') === 'true';
   });
@@ -61,6 +66,18 @@ export default function HostSessionPage() {
 
   const isAnswerRevealed = Boolean(timeUpData?.correctOptions?.length);
   const isVotingClosed = timeRemaining === 0 || Boolean(timeUpData?.votingClosed) || isAnswerRevealed;
+
+  const toggleAnswerViewMode = useCallback(() => {
+    setAnswerViewMode((prev) => {
+      const next = prev === 'wordcloud' ? 'grid' : 'wordcloud';
+      localStorage.setItem('quizlive_answer_view_mode', next);
+      toast.success(next === 'wordcloud' ? 'Interactive Word Cloud: Enabled' : 'Grid Cards View: Enabled', {
+        icon: next === 'wordcloud' ? '☁️' : '📊',
+        duration: 2000,
+      });
+      return next;
+    });
+  }, []);
 
   const toggleAutoReveal = () => {
     const nextVal = !autoReveal;
@@ -140,6 +157,7 @@ export default function HostSessionPage() {
       setTimeUpData(null);
       setShowSlideLeaderboard(false);
       setOptionVotes({});
+      setSubmittedAnswers([]);
 
       // Reset each participant's vote status for this new question
       setParticipants((prev) =>
@@ -173,6 +191,12 @@ export default function HostSessionPage() {
           [data.optionId]: (prev[data.optionId] || 0) + 1,
         }));
       }
+
+      // Record full answer payload for Interactive Word Cloud and analytics
+      setSubmittedAnswers((prev) => [
+        ...prev.filter((a) => a.participantId !== data.participantId),
+        data,
+      ]);
 
       // Mark this participant as voted in the live roster
       setParticipants((prev) =>
@@ -302,6 +326,8 @@ export default function HostSessionPage() {
         toggleFullscreen();
       } else if (e.key === 's' || e.key === 'S') {
         toggleSidebar();
+      } else if (e.key === 'w' || e.key === 'W') {
+        toggleAnswerViewMode();
       } else if (e.key === 'l' || e.key === 'L') {
         setShowSlideLeaderboard((prev) => !prev);
       } else if (e.key === 'q' || e.key === 'Q') {
@@ -315,7 +341,7 @@ export default function HostSessionPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [session, participants, timeUpData, showSlideLeaderboard, leaderboard, handleStartQuiz, handleRevealAnswer, handleNextQuestion, toggleSidebar]);
+  }, [session, participants, timeUpData, showSlideLeaderboard, leaderboard, handleStartQuiz, handleRevealAnswer, handleNextQuestion, toggleSidebar, toggleAnswerViewMode]);
 
   const handleCopyLink = () => {
     const joinUrl = `${window.location.origin}/join/${session?.code || ''}`;
@@ -480,6 +506,22 @@ export default function HostSessionPage() {
             <span className="text-[10px] bg-white/20 px-1.5 py-0.2 rounded-full font-mono">
               {participants.length}
             </span>
+          </button>
+
+          {/* Interactive Word Cloud Mode Toggle */}
+          <button
+            onClick={toggleAnswerViewMode}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm ${
+              answerViewMode === 'wordcloud'
+                ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-cyan-900/50'
+                : isSlideMode
+                ? 'bg-white/10 hover:bg-white/20 text-gray-200'
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+            }`}
+            title="Toggle Live Answer Interactive Word Cloud (Key: W)"
+          >
+            <Cloud className="w-3.5 h-3.5 text-cyan-300" />
+            <span className="hidden sm:inline">Word Cloud</span>
           </button>
 
           {/* Mini Screen / Live Roster Toggle */}
@@ -779,73 +821,121 @@ export default function HostSessionPage() {
                 </div>
               )}
 
-              {/* Kahoot-Style Options Grid with Live Voting Bars */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
-                {currentQuestion.options?.map((opt, i) => {
-                  const style = OPTION_STYLES[i % OPTION_STYLES.length];
-                  const isCorrect = isAnswerRevealed && timeUpData?.correctOptions?.some((co) => co.id === opt.id);
-                  const votes = optionVotes[opt.id] || 0;
-                  const votePercent =
-                    answersCount > 0 ? Math.round((votes / answersCount) * 100) : 0;
+              {/* Answer Presentation Mode Header Bar */}
+              <div className="flex items-center justify-between mb-4 mt-2">
+                <span className="text-xs uppercase font-extrabold text-gray-400 tracking-wider">
+                  {answerViewMode === 'wordcloud' ? '☁️ Live Interactive Word Cloud' : '📊 Kahoot Option Cards & Live Votes'}
+                </span>
+                <div className="flex items-center p-0.5 bg-black/40 border border-white/10 rounded-2xl backdrop-blur-md">
+                  <button
+                    onClick={() => setAnswerViewMode('grid')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                      answerViewMode === 'grid'
+                        ? 'bg-purple-600 text-white shadow'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                    title="Switch to Grid Cards"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span>Grid View</span>
+                  </button>
+                  <button
+                    onClick={() => setAnswerViewMode('wordcloud')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                      answerViewMode === 'wordcloud'
+                        ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                    title="Switch to Interactive Word Cloud (Key: W)"
+                  >
+                    <Cloud className="w-3.5 h-3.5 text-cyan-300" />
+                    <span>Word Cloud</span>
+                    <span className="text-[10px] bg-white/20 px-1 py-0.2 rounded font-mono hidden sm:inline">W</span>
+                  </button>
+                </div>
+              </div>
 
-                  return (
-                    <div
-                      key={opt.id || i}
-                      className={`relative p-6 rounded-3xl overflow-hidden font-bold text-xl sm:text-2xl shadow-lg transition-all duration-300 flex flex-col justify-between min-h-[120px] ${
-                        isAnswerRevealed
-                          ? isCorrect
-                            ? 'ring-4 ring-emerald-400 bg-emerald-500 text-white scale-[1.02] shadow-emerald-900/50'
-                            : 'opacity-35 bg-slate-800 text-gray-400 scale-[0.98]'
-                          : `${style.bg} text-white`
-                      }`}
-                    >
-                      {/* Background Vote Percentage Fill Bar (Live update as answers come in!) */}
-                      {answersCount > 0 && (
-                        <div
-                          className="absolute inset-0 bg-black/20 pointer-events-none transition-all duration-500"
-                          style={{ width: `${votePercent}%` }}
-                        />
-                      )}
+              {answerViewMode === 'wordcloud' ? (
+                <InteractiveWordCloud
+                  currentQuestion={currentQuestion}
+                  optionVotes={optionVotes}
+                  submittedAnswers={submittedAnswers}
+                  isAnswerRevealed={isAnswerRevealed}
+                  timeUpData={timeUpData}
+                  answersCount={answersCount}
+                  totalPlayers={totalPlayers}
+                  isDark={isSlideMode}
+                  onSwitchToGrid={() => setAnswerViewMode('grid')}
+                />
+              ) : (
+                /* Kahoot-Style Options Grid with Live Voting Bars */
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+                  {currentQuestion.options?.map((opt, i) => {
+                    const style = OPTION_STYLES[i % OPTION_STYLES.length];
+                    const isCorrect = isAnswerRevealed && timeUpData?.correctOptions?.some((co) => co.id === opt.id);
+                    const votes = optionVotes[opt.id] || 0;
+                    const votePercent =
+                      answersCount > 0 ? Math.round((votes / answersCount) * 100) : 0;
 
-                      {/* Top Row: Geometric Icon + Option Text */}
-                      <div className="relative z-10 flex items-start gap-4 justify-between">
-                        <div className="flex items-center gap-3">
-                          <span className="w-10 h-10 rounded-2xl bg-black/20 flex items-center justify-center font-black text-xl shrink-0">
-                            {style.shape}
-                          </span>
-                          {opt.text && <span className="leading-snug">{opt.text}</span>}
+                    return (
+                      <div
+                        key={opt.id || i}
+                        className={`relative p-6 rounded-3xl overflow-hidden font-bold text-xl sm:text-2xl shadow-lg transition-all duration-300 flex flex-col justify-between min-h-[120px] ${
+                          isAnswerRevealed
+                            ? isCorrect
+                              ? 'ring-4 ring-emerald-400 bg-emerald-500 text-white scale-[1.02] shadow-emerald-900/50'
+                              : 'opacity-35 bg-slate-800 text-gray-400 scale-[0.98]'
+                            : `${style.bg} text-white`
+                        }`}
+                      >
+                        {/* Background Vote Percentage Fill Bar (Live update as answers come in!) */}
+                        {answersCount > 0 && (
+                          <div
+                            className="absolute inset-0 bg-black/20 pointer-events-none transition-all duration-500"
+                            style={{ width: `${votePercent}%` }}
+                          />
+                        )}
+
+                        {/* Top Row: Geometric Icon + Option Text */}
+                        <div className="relative z-10 flex items-start gap-4 justify-between">
+                          <div className="flex items-center gap-3">
+                            <span className="w-10 h-10 rounded-2xl bg-black/20 flex items-center justify-center font-black text-xl shrink-0">
+                              {style.shape}
+                            </span>
+                            {opt.text && <span className="leading-snug">{opt.text}</span>}
+                          </div>
+
+                          {/* Status Checkmark when Answer Revealed */}
+                          {isAnswerRevealed && isCorrect && (
+                            <div className="bg-white text-emerald-600 rounded-full p-1.5 shadow-md shrink-0">
+                              <CheckCircle2 className="w-7 h-7" />
+                            </div>
+                          )}
                         </div>
 
-                        {/* Status Checkmark when Answer Revealed */}
-                        {isAnswerRevealed && isCorrect && (
-                          <div className="bg-white text-emerald-600 rounded-full p-1.5 shadow-md shrink-0">
-                            <CheckCircle2 className="w-7 h-7" />
+                        {/* Option Image if attached */}
+                        {opt.media_url && (
+                          <div className="relative z-10 w-full h-32 sm:h-44 my-3 rounded-2xl overflow-hidden bg-black/25 flex items-center justify-center p-2 shadow-inner">
+                            <img
+                              src={getMediaUrl(opt.media_url)}
+                              alt={opt.text || `Option ${i + 1}`}
+                              className="w-full h-full object-contain rounded-xl"
+                            />
                           </div>
                         )}
-                      </div>
 
-                      {/* Option Image if attached */}
-                      {opt.media_url && (
-                        <div className="relative z-10 w-full h-32 sm:h-44 my-3 rounded-2xl overflow-hidden bg-black/25 flex items-center justify-center p-2 shadow-inner">
-                          <img
-                            src={getMediaUrl(opt.media_url)}
-                            alt={opt.text || `Option ${i + 1}`}
-                            className="w-full h-full object-contain rounded-xl"
-                          />
+                        {/* Bottom Row: Live Vote Count & Percentage Bar */}
+                        <div className="relative z-10 flex items-center justify-between text-xs sm:text-sm font-extrabold uppercase tracking-wider mt-4 opacity-90">
+                          <span>
+                            {votes} {votes === 1 ? 'vote' : 'votes'}
+                          </span>
+                          <span>{votePercent}%</span>
                         </div>
-                      )}
-
-                      {/* Bottom Row: Live Vote Count & Percentage Bar */}
-                      <div className="relative z-10 flex items-center justify-between text-xs sm:text-sm font-extrabold uppercase tracking-wider mt-4 opacity-90">
-                        <span>
-                          {votes} {votes === 1 ? 'vote' : 'votes'}
-                        </span>
-                        <span>{votePercent}%</span>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Bottom Presenter Toolbar */}
               <div className="mt-8 pt-6 border-t border-white/10 flex flex-wrap items-center justify-between gap-4">

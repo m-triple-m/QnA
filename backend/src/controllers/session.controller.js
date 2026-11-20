@@ -40,6 +40,37 @@ async function createSession(req, res) {
 }
 
 /**
+ * POST /sessions/open-poll — host creates a dedicated Open Q&A / Live Poll session
+ */
+async function createOpenPollSession(req, res) {
+  let [quiz] = await Quiz.findOrCreate({
+    where: { host_id: req.user.id, title: 'Live Audience Q&A & Word Cloud' },
+    defaults: {
+      description: 'Interactive open question answering and live audience word clouds',
+      is_active: true,
+    },
+  });
+
+  const code = await generateUniqueCode();
+  const clientBase = (process.env.CLIENT_URL || '').split(',')[0].trim() || 'http://localhost:5173';
+  const joinUrl = `${clientBase}/join/${code}`;
+  const qr_data = await generateQRCode(joinUrl);
+
+  const session = await Session.create({
+    quiz_id: quiz.id,
+    code,
+    qr_data,
+    status: 'waiting',
+  });
+
+  return res.status(201).json({
+    success: true,
+    data: { session, quiz },
+    message: 'Open Q&A session created',
+  });
+}
+
+/**
  * GET /sessions/:code/join  — public join info
  */
 async function getJoinInfo(req, res) {
@@ -171,4 +202,4 @@ async function getHostSessions(req, res) {
   });
 }
 
-module.exports = { createSession, getJoinInfo, getSessionResults, exportSessionResults, getHostSessions };
+module.exports = { createSession, createOpenPollSession, getJoinInfo, getSessionResults, exportSessionResults, getHostSessions };

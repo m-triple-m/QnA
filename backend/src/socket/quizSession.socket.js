@@ -44,6 +44,37 @@ module.exports = function(io) {
           hasVoted: Boolean(store.currentAnswers && store.currentAnswers.has(Number(p.id))),
         }));
         socket.emit('session:state', { session, participants: participantsWithStatus });
+
+        // If an open question is active, send it and current word cloud to host immediately
+        if (store.openQuestion) {
+          const wordsArray = Array.from(store.openQuestion.wordCounts.values()).map((w) => ({
+            id: w.id,
+            text: w.text,
+            count: w.count,
+            voters: Array.from(w.voters),
+            isOption: w.isOption,
+            optionId: w.optionId,
+          })).sort((a, b) => b.count - a.count);
+
+          socket.emit('session:open_question', {
+            id: store.openQuestion.id,
+            text: store.openQuestion.text,
+            allowCustom: store.openQuestion.allowCustom,
+            allowMultiple: store.openQuestion.allowMultiple,
+            maxSubmissions: store.openQuestion.maxSubmissions,
+            options: store.openQuestion.options,
+            timeLimitSec: store.openQuestion.timeLimitSec,
+            isOpen: store.openQuestion.isOpen,
+          });
+
+          socket.emit('session:open_word_cloud_update', {
+            questionId: store.openQuestion.id,
+            totalSubmissions: store.openQuestion.totalSubmissions,
+            totalParticipants: store.openQuestion.answers.size,
+            words: wordsArray,
+          });
+        }
+
         logger.info(`Host joined session ${sessionId}`);
       } catch (err) {
         logger.error('host:join_session error', err);
@@ -263,6 +294,98 @@ module.exports = function(io) {
       }
     });
 
+    // ─── OPEN Q&A & AUDIENCE LIVE POLL EVENTS ───────────────────────────
+
+    // Host launches an open question to audience
+    // Event: 'host:ask_open_question'
+    socket.on('host:ask_open_question', async ({ sessionId, questionText, allowCustom = true, allowMultiple = true, maxSubmissions = 3, options = [], timeLimitSec = 0 }) => {
+      try {
+        const session = await Session.findByPk(sessionId);
+        if (!session) return socket.emit('error', { message: 'Session not found' });
+
+        if (session.status !== 'live') {
+          await session.update({ status: 'live', started_at: session.started_at || new Date() });
+        }
+
+        const store = sessionStore.get(Number(sessionId)) || {};
+        if (store.openQuestionTimer) clearTimeout(store.openQuestionTimer);
+
+        const safeOptions = (options || []).map((o, idx) => ({
+          id: o.id || String(idx + 1),
+          text: o.text || o,
+        }));
+
+        const openQ = {
+          id: 'open_' + Date.now(),
+          text: (questionText || '').trim(),
+          allowCustom: Boolean(allowCustom),
+          allowMultiple: Boolean(allowMultiple),
+          maxSubmissions: Number(maxSubmissions) || 3,
+          options: safeOptions,
+          timeLimitSec: Number(timeLimitSec) || 0,
+          isOpen: true,
+          startedAt: Date.now(),
+          answers: new Map(), // participantId -> array of { text, optionId, timestamp }
+          wordCounts: new Map(), // lowercase text -> { id, text, count, voters: Set, isOption, optionId }
+          totalSubmissions: 0,
+        };
+
+        store.openQuestion = openQ;
+        sessionStore.set(Number(sessionId), store);
+
+        // Broadcast to all participants and host in session room
+        io.to(`session:${sessionId}`).emit('session:open_question', {
+          id: openQ.id,
+          text: openQ.text,
+          allowCustom: openQ.allowCustom,
+          allowMultiple: openQ.allowMultiple,
+          maxSubmissions: openQ.maxSubmissions,
+          options: openQ.options,
+          timeLimitSec: openQ.timeLimitSec,
+          isOpen: true,
+        });
+
+        // Auto close after time limit if set
+        if (openQ.timeLimitSec > 0) {
+          store.openQuestionTimer = setTimeout(() => {
+            if (store.openQuestion && store.openQuestion.id === openQ.id) {
+              store.openQuestion.isOpen = false;
+              io.to(`session:${sessionId}`).emit('session:open_question_closed', { id: openQ.id });
+              logger.info(`Session ${sessionId} open question timed out`);
+            }
+          }, openQ.timeLimitSec * 1000);
+        }
+
+        logger.info(`Session ${sessionId} open question launched: "${openQ.text}"`);
+      } catch (err) {
+        logger.error('host:ask_open_question error', err);
+        socket.emit('error', { message: 'Failed to launch open question' });
+      }
+    });
+
+    // Host manually closes voting on current open question
+    socket.on('host:close_open_question', ({ sessionId }) => {
+      const store = sessionStore.get(Number(sessionId));
+      if (store && store.openQuestion) {
+        if (store.openQuestionTimer) clearTimeout(store.openQuestionTimer);
+        store.openQuestion.isOpen = false;
+        io.to(`session:${sessionId}`).emit('session:open_question_closed', { id: store.openQuestion.id });
+        logger.info(`Session ${sessionId} open question closed by host`);
+      }
+    });
+
+    // Host resets/clears answers for the current open question
+    socket.on('host:clear_open_question', ({ sessionId }) => {
+      const store = sessionStore.get(Number(sessionId));
+      if (store && store.openQuestion) {
+        store.openQuestion.answers.clear();
+        store.openQuestion.wordCounts.clear();
+        store.openQuestion.totalSubmissions = 0;
+        io.to(`session:${sessionId}`).emit('session:open_word_cloud_cleared', { questionId: store.openQuestion.id });
+        logger.info(`Session ${sessionId} open question word cloud cleared`);
+      }
+    });
+
     // ─── PARTICIPANT EVENTS ─────────────────────────────────────────────
 
     // Participant joins the session via QR scan or PIN code
@@ -317,6 +440,23 @@ module.exports = function(io) {
           status: session.status,
           currentQuestionIndex: session.current_question_index,
         });
+
+        // If an open question is active, send it immediately to participant
+        const store = sessionStore.get(session.id);
+        if (store && store.openQuestion) {
+          const pAnswers = store.openQuestion.answers.get(participant.id) || [];
+          socket.emit('session:open_question', {
+            id: store.openQuestion.id,
+            text: store.openQuestion.text,
+            allowCustom: store.openQuestion.allowCustom,
+            allowMultiple: store.openQuestion.allowMultiple,
+            maxSubmissions: store.openQuestion.maxSubmissions,
+            options: store.openQuestion.options,
+            timeLimitSec: store.openQuestion.timeLimitSec,
+            isOpen: store.openQuestion.isOpen,
+            mySubmissions: pAnswers,
+          });
+        }
 
         // Notify host of new participant with their ID and initial score
         const count = await Participant.count({ where: { session_id: session.id } });
@@ -406,6 +546,107 @@ module.exports = function(io) {
       } catch (err) {
         logger.error('participant:answer error', err);
         socket.emit('error', { message: 'Failed to submit answer' });
+      }
+    });
+
+    // Participant submits response to open question (fixed option or custom text)
+    // Event: 'participant:open_answer'
+    socket.on('participant:open_answer', async ({ sessionId, participantId, nickname, answerText, optionId }) => {
+      try {
+        const store = sessionStore.get(Number(sessionId));
+        if (!store || !store.openQuestion) {
+          return socket.emit('error', { message: 'No active open question found' });
+        }
+        const openQ = store.openQuestion;
+        if (!openQ.isOpen) {
+          return socket.emit('error', { message: 'Voting has been closed for this question' });
+        }
+
+        const pId = Number(participantId);
+        const pAnswers = openQ.answers.get(pId) || [];
+
+        // Check submission limits
+        if (!openQ.allowMultiple && pAnswers.length >= 1) {
+          return socket.emit('open_answer:limit_reached', { message: 'You have already submitted an answer' });
+        }
+        if (openQ.allowMultiple && pAnswers.length >= openQ.maxSubmissions) {
+          return socket.emit('open_answer:limit_reached', { message: `Maximum limit of ${openQ.maxSubmissions} answers reached` });
+        }
+
+        const cleanText = (answerText || '').trim();
+        if (!cleanText && !optionId) {
+          return socket.emit('error', { message: 'Please enter or select an answer' });
+        }
+
+        let displayText = cleanText;
+        let isOption = false;
+        if (optionId) {
+          const matchedOpt = openQ.options.find(o => String(o.id) === String(optionId));
+          if (matchedOpt) {
+            displayText = matchedOpt.text;
+            isOption = true;
+          }
+        }
+
+        // Record submission
+        pAnswers.push({
+          text: displayText,
+          optionId: optionId || null,
+          timestamp: Date.now(),
+        });
+        openQ.answers.set(pId, pAnswers);
+        openQ.totalSubmissions += 1;
+
+        // Group into wordCounts
+        const key = displayText.toLowerCase();
+        let wordEntry = openQ.wordCounts.get(key);
+        if (!wordEntry) {
+          wordEntry = {
+            id: 'word_' + (openQ.wordCounts.size + 1),
+            text: displayText,
+            count: 0,
+            voters: new Set(),
+            isOption,
+            optionId: optionId || null,
+          };
+          openQ.wordCounts.set(key, wordEntry);
+        }
+        wordEntry.count += 1;
+        wordEntry.voters.add(nickname || `Player ${pId}`);
+
+        // Broadcast updated cloud to everyone in the room
+        const wordsArray = Array.from(openQ.wordCounts.values()).map(w => ({
+          id: w.id,
+          text: w.text,
+          count: w.count,
+          voters: Array.from(w.voters),
+          isOption: w.isOption,
+          optionId: w.optionId,
+        })).sort((a, b) => b.count - a.count);
+
+        io.to(`session:${sessionId}`).emit('session:open_word_cloud_update', {
+          questionId: openQ.id,
+          totalSubmissions: openQ.totalSubmissions,
+          totalParticipants: openQ.answers.size,
+          words: wordsArray,
+          latestAnswer: {
+            nickname: nickname || `Player ${pId}`,
+            text: displayText,
+            optionId: optionId || null,
+          },
+        });
+
+        socket.emit('open_answer:accepted', {
+          submittedCount: pAnswers.length,
+          maxSubmissions: openQ.maxSubmissions,
+          answerText: displayText,
+          optionId: optionId || null,
+        });
+
+        logger.info(`Participant ${pId} ("${nickname}") submitted open answer: "${displayText}" in session ${sessionId}`);
+      } catch (err) {
+        logger.error('participant:open_answer error', err);
+        socket.emit('error', { message: 'Failed to submit open answer' });
       }
     });
 

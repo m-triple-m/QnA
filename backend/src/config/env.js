@@ -1,5 +1,8 @@
 'use strict';
 
+const path = require('path');
+// Load .env from backend directory as well as current working directory
+require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 require('dotenv').config();
 
 const REQUIRED_ENV_VARS = [

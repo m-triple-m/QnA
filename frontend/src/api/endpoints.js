@@ -40,6 +40,7 @@ export const createSession = (quizIdOrData) => {
   const payload = typeof quizIdOrData === 'object' ? quizIdOrData : { quiz_id: quizIdOrData };
   return api.post('/sessions', payload).then(res => res.data?.data?.session || res.data?.session || res.data);
 };
+export const createOpenPollSession = () => api.post('/sessions/open-poll').then(res => res.data?.data || res.data);
 export const getJoinInfo = (code) => api.get(`/sessions/${code}/join`).then(res => res.data?.data || res.data);
 export const getSessionResults = (id) => api.get(`/sessions/${id}/results`).then(res => res.data?.data || res.data);
 export const exportSessionResults = (id) => api.get(`/sessions/${id}/export`, { responseType: 'blob' });

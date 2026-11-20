@@ -13,6 +13,7 @@ router.get('/join/:code', ctrl.getJoinInfo);
 
 // Host-only
 router.post('/', authenticate, requireRole('host'), ctrl.createSession);
+router.post('/open-poll', authenticate, requireRole('host'), ctrl.createOpenPollSession);
 router.get('/:id/results', authenticate, requireRole('host'), ctrl.getSessionResults);
 router.get('/:id/export', authenticate, requireRole('host'), ctrl.exportSessionResults);
 router.get('/', authenticate, requireRole('host'), ctrl.getHostSessions);

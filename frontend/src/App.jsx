@@ -12,6 +12,7 @@ import HostDashboard from '@/pages/host/HostDashboard';
 import QuizListPage from '@/pages/host/QuizListPage';
 import QuizBuilderPage from '@/pages/host/QuizBuilderPage';
 import HostSessionPage from '@/pages/host/HostSessionPage';
+import OpenQnAPage from '@/pages/host/OpenQnAPage';
 import AdminDashboard from '@/pages/admin/AdminDashboard';
 import JoinPage from '@/pages/participant/JoinPage';
 import PlayPage from '@/pages/participant/PlayPage';
@@ -83,6 +84,22 @@ export default function App() {
               element={
                 <ProtectedRoute role="host">
                   <HostSessionPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/host/open-qna"
+              element={
+                <ProtectedRoute role="host">
+                  <OpenQnAPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/host/live-poll"
+              element={
+                <ProtectedRoute role="host">
+                  <OpenQnAPage />
                 </ProtectedRoute>
               }
             />

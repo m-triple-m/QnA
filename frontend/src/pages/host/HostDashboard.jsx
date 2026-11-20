@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   BookOpen, Users, PlayCircle, TrendingUp,
-  Plus, ChevronRight, Calendar, Clock
+  Plus, ChevronRight, Calendar, Clock, Cloud
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDashboardStats, getRecentSessions } from '@/api/endpoints';
@@ -101,6 +101,13 @@ export default function HostDashboard() {
           >
             <Plus className="w-5 h-5" />
             Create New Quiz
+          </button>
+          <button
+            onClick={() => navigate('/host/open-qna')}
+            className="flex items-center gap-2 bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white font-semibold px-5 py-2.5 rounded-xl shadow-sm transition"
+          >
+            <Cloud className="w-5 h-5 text-cyan-200" />
+            Live Word Cloud Q&A
           </button>
           <button
             onClick={() => navigate('/host/quizzes')}

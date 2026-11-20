@@ -1,7 +1,7 @@
 'use strict';
 
 const { Server } = require('socket.io');
-const { CLIENT_URL } = require('../config/env');
+const { corsOptions } = require('../config/cors');
 const logger = require('../config/logger');
 
 let io;
@@ -13,11 +13,7 @@ let io;
  */
 function initSocket(httpServer) {
   io = new Server(httpServer, {
-    cors: {
-      origin: CLIENT_URL,
-      methods: ['GET', 'POST'],
-      credentials: true,
-    },
+    cors: corsOptions,
   });
 
   // Attach quiz-session namespace handler

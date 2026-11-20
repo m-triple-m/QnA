@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, BookOpen, PlayCircle, LogOut,
-  Menu, X, Zap, ChevronDown, User
+  Menu, X, Zap, ChevronDown, User, Cloud
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import toast from 'react-hot-toast';
@@ -10,6 +10,7 @@ import toast from 'react-hot-toast';
 const NAV_ITEMS = [
   { name: 'Dashboard', path: '/host', icon: LayoutDashboard, exact: true },
   { name: 'My Quizzes', path: '/host/quizzes', icon: BookOpen },
+  { name: 'Live Word Cloud Q&A', path: '/host/open-qna', icon: Cloud },
   { name: 'Sessions', path: '/host/sessions', icon: PlayCircle },
 ];
 

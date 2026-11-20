@@ -11,7 +11,10 @@ const path = require('path');
 const fs = require('fs');
 
 const { CLIENT_URL, NODE_ENV } = require('./config/env');
+const { corsOptions } = require('./config/cors');
 const logger = require('./config/logger');
+
+
 
 const app = express();
 
@@ -24,12 +27,8 @@ app.use(
 app.use(compression());
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
-app.use(
-  cors({
-    origin: CLIENT_URL,
-    credentials: true,
-  })
-);
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // ── Body parsers ──────────────────────────────────────────────────────────────
 app.use(express.json());

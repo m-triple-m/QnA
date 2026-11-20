@@ -8,7 +8,7 @@ import Timer from '../../components/Timer';
 import SoundToggle from '../../components/SoundToggle';
 import sound from '../../lib/sound';
 import { getMediaUrl } from '../../lib/utils';
-import { Sparkles, Trophy, Users, Award, CheckCircle2, XCircle, Gamepad2, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { Sparkles, Trophy, Users, Award, CheckCircle2, XCircle, Gamepad2, AlertTriangle, ArrowLeft, Cloud, Send, MessageSquare } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function PlayPage() {
@@ -51,6 +51,12 @@ export default function PlayPage() {
   const [finalResult, setFinalResult] = useState(null);
   const [joinError, setJoinError] = useState('');
   const [showMiniScreen, setShowMiniScreen] = useState(false);
+
+  // Open Q&A State
+  const [openQuestion, setOpenQuestion] = useState(null);
+  const [openSubmissions, setOpenSubmissions] = useState([]);
+  const [openAnswerInput, setOpenAnswerInput] = useState('');
+  const [submittingOpen, setSubmittingOpen] = useState(false);
 
   // If no nickname, redirect to join page
   useEffect(() => {
@@ -195,6 +201,34 @@ export default function PlayPage() {
       socket.emit('participant:join', { sessionCode, nickname });
     };
 
+    const handleOpenQuestion = (data) => {
+      setOpenQuestion(data);
+      if (data.mySubmissions) {
+        setOpenSubmissions(data.mySubmissions);
+      }
+      setPhase('open_question');
+      sound.play('start');
+    };
+
+    const handleOpenAccepted = (data) => {
+      setOpenSubmissions((prev) => [...prev, { text: data.answerText, optionId: data.optionId }]);
+      setOpenAnswerInput('');
+      setSubmittingOpen(false);
+      sound.play('click');
+      toast.success('Answer submitted to the live word cloud!', { icon: '☁️' });
+    };
+
+    const handleOpenClosed = () => {
+      setOpenQuestion((prev) => (prev ? { ...prev, isOpen: false } : null));
+      sound.play('timeUp');
+      toast('Voting has been closed by the host', { icon: '🔒' });
+    };
+
+    const handleOpenCleared = () => {
+      setOpenSubmissions([]);
+      toast('Responses reset for this question', { icon: '🔄' });
+    };
+
     socket.on('session:joined', handleJoined);
     socket.on('session:started', handleStarted);
     socket.on('session:question', handleQuestion);
@@ -204,6 +238,10 @@ export default function PlayPage() {
     socket.on('session:leaderboard', handleLeaderboard);
     socket.on('session:ended', handleEnded);
     socket.on('session:participant_joined', handleParticipantJoined);
+    socket.on('session:open_question', handleOpenQuestion);
+    socket.on('open_answer:accepted', handleOpenAccepted);
+    socket.on('session:open_question_closed', handleOpenClosed);
+    socket.on('session:open_word_cloud_cleared', handleOpenCleared);
     socket.on('error', handleError);
     socket.on('connect_error', handleConnectError);
     socket.on('reconnect', handleReconnect);
@@ -219,11 +257,31 @@ export default function PlayPage() {
       socket.off('session:leaderboard', handleLeaderboard);
       socket.off('session:ended', handleEnded);
       socket.off('session:participant_joined', handleParticipantJoined);
+      socket.off('session:open_question', handleOpenQuestion);
+      socket.off('open_answer:accepted', handleOpenAccepted);
+      socket.off('session:open_question_closed', handleOpenClosed);
+      socket.off('session:open_word_cloud_cleared', handleOpenCleared);
       socket.off('error', handleError);
       socket.off('connect_error', handleConnectError);
       socket.off('reconnect', handleReconnect);
     };
   }, [sessionCode, nickname, getSocket]);
+
+  // Handle Open Q&A Submission
+  const handleOpenSubmit = (textToSubmit, optId = null) => {
+    const text = (textToSubmit || openAnswerInput).trim();
+    if (!text && !optId) return;
+
+    const socket = getSocket();
+    setSubmittingOpen(true);
+    socket.emit('participant:open_answer', {
+      sessionId: sessionId || sessionStorage.getItem(`sessionId_${sessionCode}`),
+      participantId: participantId || sessionStorage.getItem(`participantId_${sessionCode}`),
+      nickname,
+      answerText: text,
+      optionId: optId || null,
+    });
+  };
 
   // Handle Answer Submission
   const handleAnswer = ({ optionId, optionIds, textAnswer }) => {
@@ -351,6 +409,151 @@ export default function PlayPage() {
                 Get ready to answer fast for bonus points!
               </span>
             </div>
+          </div>
+        )}
+
+        {/* Phase: Open Audience Q&A / Live Word Cloud Question */}
+        {phase === 'open_question' && openQuestion && (
+          <div className="w-full max-w-lg mx-auto p-4 sm:p-6 space-y-6 animate-fade-in">
+            {/* Header Badge */}
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                <Cloud className="w-3.5 h-3.5 animate-pulse text-cyan-400" />
+                <span>Live Audience Word Cloud</span>
+              </span>
+              <span
+                className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                  openQuestion.isOpen
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                }`}
+              >
+                {openQuestion.isOpen ? 'Voting Open' : 'Voting Closed'}
+              </span>
+            </div>
+
+            {/* Question Text */}
+            <div className="bg-slate-800/80 border border-white/10 rounded-3xl p-6 sm:p-8 text-center shadow-xl">
+              <h2 className="text-2xl sm:text-3xl font-black text-white leading-snug">
+                {openQuestion.text}
+              </h2>
+            </div>
+
+            {/* Submission Status or Input */}
+            {openQuestion.isOpen ? (
+              <div className="space-y-4">
+                {/* Fixed Options if provided */}
+                {openQuestion.options?.length > 0 && (
+                  <div className="space-y-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block text-center">
+                      Choose an option:
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {openQuestion.options.map((opt) => {
+                        const isChosen = openSubmissions.some((s) => String(s.optionId) === String(opt.id));
+                        const isLimitReached = !openQuestion.allowMultiple
+                          ? openSubmissions.length >= 1
+                          : openSubmissions.length >= (openQuestion.maxSubmissions || 3);
+
+                        return (
+                          <button
+                            key={opt.id}
+                            disabled={isLimitReached || submittingOpen}
+                            onClick={() => handleOpenSubmit(opt.text, opt.id)}
+                            className={`p-4 rounded-2xl font-black text-base transition-all duration-200 flex items-center justify-between border-2 shadow-md ${
+                              isChosen
+                                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 border-purple-400 text-white ring-2 ring-purple-400/50 scale-[1.01]'
+                                : 'bg-slate-800/90 hover:bg-slate-700/90 border-slate-700 text-slate-200 hover:border-purple-500/50 active:scale-[0.98]'
+                            } disabled:opacity-50 disabled:pointer-events-none`}
+                          >
+                            <span>{opt.text}</span>
+                            {isChosen && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Custom Word Input if allowed */}
+                {openQuestion.allowCustom && (
+                  (!openQuestion.allowMultiple && openSubmissions.length >= 1) ||
+                  (openQuestion.allowMultiple && openSubmissions.length >= (openQuestion.maxSubmissions || 3)) ? (
+                    <div className="bg-emerald-950/40 border border-emerald-500/40 rounded-2xl p-4 text-center text-emerald-300 text-sm font-bold flex items-center justify-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                      <span>You have submitted all your responses for this question!</span>
+                    </div>
+                  ) : (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleOpenSubmit(openAnswerInput);
+                      }}
+                      className="space-y-3"
+                    >
+                      {openQuestion.options?.length > 0 && (
+                        <div className="flex items-center gap-2 text-xs text-slate-400 font-bold justify-center my-1">
+                          <span className="h-px bg-slate-700 flex-1" />
+                          <span>OR TYPE YOUR OWN WORD</span>
+                          <span className="h-px bg-slate-700 flex-1" />
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          maxLength={50}
+                          value={openAnswerInput}
+                          onChange={(e) => setOpenAnswerInput(e.target.value)}
+                          placeholder="Type your word or answer..."
+                          className="flex-1 px-4 py-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 text-white placeholder-slate-500 font-bold text-base focus:outline-none focus:ring-2 focus:ring-purple-400"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!openAnswerInput.trim() || submittingOpen}
+                          className="px-5 py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 text-white font-black rounded-2xl shadow-lg transition flex items-center justify-center"
+                        >
+                          <Send className="w-5 h-5" />
+                        </button>
+                      </div>
+
+                      {openQuestion.allowMultiple && (
+                        <p className="text-right text-[11px] text-slate-400 font-medium">
+                          Submitted {openSubmissions.length} of {openQuestion.maxSubmissions || 3} allowed
+                        </p>
+                      )}
+                    </form>
+                  )
+                )}
+
+                {/* List of Participant's Submitted Answers */}
+                {openSubmissions.length > 0 && (
+                  <div className="bg-slate-800/40 border border-slate-700/60 rounded-2xl p-4 space-y-2">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Your Submitted Words:
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      {openSubmissions.map((sub, i) => (
+                        <span
+                          key={i}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-purple-500/20 text-purple-200 border border-purple-500/30 text-sm font-bold animate-scale-up"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>{sub.text}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-slate-800/60 border border-slate-700 rounded-3xl p-6 text-center space-y-2">
+                <h3 className="text-xl font-bold text-amber-400">Voting Closed</h3>
+                <p className="text-sm text-slate-300">
+                  The host has closed voting. Look at the main screen to see the live word cloud results!
+                </p>
+              </div>
+            )}
           </div>
         )}
 
