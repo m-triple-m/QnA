@@ -12,6 +12,7 @@ import { exportSessionResults } from '@/api/endpoints';
 import sound from '@/lib/sound';
 import SoundToggle from '@/components/SoundToggle';
 import ParticipantMiniScreen from '@/components/ParticipantMiniScreen';
+import HostParticipantSidebar from '@/components/HostParticipantSidebar';
 import { getMediaUrl } from '@/lib/utils';
 
 // Kahoot geometric shape themes
@@ -46,6 +47,9 @@ export default function HostSessionPage() {
   const [showSlideLeaderboard, setShowSlideLeaderboard] = useState(false);
   const [showQROverlay, setShowQROverlay] = useState(false);
   const [showMiniScreen, setShowMiniScreen] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(() => {
+    return localStorage.getItem('quizlive_host_sidebar') !== 'false';
+  });
   const [soundMuted, setSoundMuted] = useState(false);
   const [optionVotes, setOptionVotes] = useState({}); // { [optionId]: count }
   const [autoReveal, setAutoReveal] = useState(() => {
@@ -267,6 +271,14 @@ export default function HostSessionPage() {
     socket.emit('host:end_session', { sessionId: Number(sessionId) });
   }, [getSocket, sessionId]);
 
+  const toggleSidebar = useCallback(() => {
+    setShowSidebar((prev) => {
+      const next = !prev;
+      localStorage.setItem('quizlive_host_sidebar', String(next));
+      return next;
+    });
+  }, []);
+
   // Keyboard navigation shortcuts for smooth live presentation
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -288,6 +300,8 @@ export default function HostSessionPage() {
         }
       } else if (e.key === 'f' || e.key === 'F') {
         toggleFullscreen();
+      } else if (e.key === 's' || e.key === 'S') {
+        toggleSidebar();
       } else if (e.key === 'l' || e.key === 'L') {
         setShowSlideLeaderboard((prev) => !prev);
       } else if (e.key === 'q' || e.key === 'Q') {
@@ -301,7 +315,7 @@ export default function HostSessionPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [session, participants, timeUpData, showSlideLeaderboard, leaderboard, handleStartQuiz, handleRevealAnswer, handleNextQuestion]);
+  }, [session, participants, timeUpData, showSlideLeaderboard, leaderboard, handleStartQuiz, handleRevealAnswer, handleNextQuestion, toggleSidebar]);
 
   const handleCopyLink = () => {
     const joinUrl = `${window.location.origin}/join/${session?.code || ''}`;
@@ -449,6 +463,25 @@ export default function HostSessionPage() {
             <span>{autoReveal ? 'Auto Reveal' : 'Manual Reveal'}</span>
           </button>
 
+          {/* Live Participant & Score Sidebar Toggle */}
+          <button
+            onClick={toggleSidebar}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm ${
+              showSidebar
+                ? 'bg-purple-600 text-white shadow-purple-900/50'
+                : isSlideMode
+                ? 'bg-white/10 hover:bg-white/20 text-gray-200'
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+            }`}
+            title="Toggle Live Participants & Score Leaderboard Sidebar (Key: S)"
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Sidebar</span>
+            <span className="text-[10px] bg-white/20 px-1.5 py-0.2 rounded-full font-mono">
+              {participants.length}
+            </span>
+          </button>
+
           {/* Mini Screen / Live Roster Toggle */}
           <button
             onClick={() => setShowMiniScreen((v) => !v)}
@@ -541,9 +574,10 @@ export default function HostSessionPage() {
       )}
 
       {/* ──────────────────────────────────────────────────────────── */}
-      {/* MAIN VIEWPORT */}
+      {/* MAIN VIEWPORT WITH PARTICIPANT SIDEBAR DOCK */}
       {/* ──────────────────────────────────────────────────────────── */}
-      <main className="flex-1 flex flex-col p-4 sm:p-8 max-w-7xl mx-auto w-full justify-center">
+      <div className="flex-1 flex min-h-0 overflow-hidden relative">
+        <main className="flex-1 flex flex-col p-4 sm:p-8 max-w-7xl mx-auto w-full justify-center overflow-y-auto">
         {/* ======================================================== */}
         {/* SLIDE 1: LOBBY / WAITING ROOM SLIDE */}
         {/* ======================================================== */}
@@ -1061,6 +1095,17 @@ export default function HostSessionPage() {
           </div>
         )}
       </main>
+
+        <HostParticipantSidebar
+          isOpen={showSidebar}
+          onToggle={toggleSidebar}
+          participants={participants}
+          session={session}
+          currentQuestion={currentQuestion}
+          isVotingClosed={isVotingClosed}
+          isSlideMode={isSlideMode}
+        />
+      </div>
 
       {/* Floating / Dockable Live Participant & Vote Status Mini Screen */}
       <ParticipantMiniScreen
