@@ -1,30 +1,104 @@
-// Web Audio API Synthesizer for QuizLive Sound Effects
-// Works without any external audio assets, zero latency, zero network requests
+// Professional Audio Synthesizer & Sound Effects Service using Tone.js
+// Provides zero-latency, studio-grade game sound effects with polyphony, reverb, and filter envelopes.
+
+import * as Tone from 'tone';
 
 class SoundService {
   constructor() {
-    this.ctx = null;
     this.enabled = true;
+    this.volume = 0.8;
+    this.isInitialized = false;
 
-    // Load persisted user preference
+    // Load persisted user preferences
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('quizlive_sound_enabled');
       this.enabled = stored !== null ? stored === 'true' : true;
-    }
-  }
 
-  getAudioContext() {
-    if (typeof window === 'undefined') return null;
-    if (!this.ctx) {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (AudioCtx) {
-        this.ctx = new AudioCtx();
+      const storedVol = localStorage.getItem('quizlive_sound_volume');
+      if (storedVol !== null) {
+        this.volume = Math.max(0, Math.min(1, parseFloat(storedVol) || 0.8));
       }
     }
-    if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume().catch(() => {});
+
+    // Lazy instruments and effects nodes
+    this.masterGain = null;
+    this.reverb = null;
+    this.synth = null;
+    this.polySynth = null;
+    this.bassSynth = null;
+    this.pluckSynth = null;
+    this.metalSynth = null;
+  }
+
+  /**
+   * Lazily initializes Tone.js audio context and studio synthesis chain.
+   * Tone.js requires a user gesture (click/tap) before starting audio context.
+   */
+  async init() {
+    if (this.isInitialized || typeof window === 'undefined') return;
+
+    try {
+      await Tone.start();
+
+      // Master output node with volume
+      this.masterGain = new Tone.Volume(Tone.gainToDb(this.volume)).toDestination();
+
+      // Ambient studio reverb (adds lush space to chimes and chords)
+      this.reverb = new Tone.Reverb({
+        decay: 1.5,
+        preDelay: 0.01,
+        wet: 0.25,
+      }).connect(this.masterGain);
+
+      // Polyphonic Synth for chords, reveals, and fanfares
+      this.polySynth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: 'triangle' },
+        envelope: {
+          attack: 0.01,
+          decay: 0.2,
+          sustain: 0.2,
+          release: 0.4,
+        },
+      }).connect(this.reverb);
+
+      // Warm FM Synth for bright success bells and chimes
+      this.chimeSynth = new Tone.PolySynth(Tone.FMSynth, {
+        harmonicity: 2,
+        modulationIndex: 1.5,
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.005, decay: 0.3, sustain: 0.05, release: 0.5 },
+        modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0, release: 0.2 },
+      }).connect(this.reverb);
+
+      // Punchy Membrane Synth for kick drums, start fanfare beats, and ticks
+      this.bassSynth = new Tone.MembraneSynth({
+        pitchDecay: 0.05,
+        octaves: 4,
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.001, decay: 0.25, sustain: 0.01, release: 0.3 },
+      }).connect(this.masterGain);
+
+      // Acoustic-style Pluck Synth for countdown ticks & bubbles
+      this.pluckSynth = new Tone.PluckSynth({
+        attackNoise: 0.8,
+        dampening: 3500,
+        resonance: 0.9,
+      }).connect(this.masterGain);
+
+      // Metal Synth for crisp clicks and cymbal flourishes
+      this.metalSynth = new Tone.MetalSynth({
+        frequency: 200,
+        envelope: { attack: 0.001, decay: 0.04, release: 0.04 },
+        harmonicity: 5.1,
+        modulationIndex: 16,
+        resonance: 4000,
+        octaves: 1.5,
+      }).connect(this.masterGain);
+
+      this.isInitialized = true;
+    } catch {
+      // AudioContext policy deferred until next user click
     }
-    return this.ctx;
   }
 
   isEnabled() {
@@ -37,8 +111,7 @@ class SoundService {
       localStorage.setItem('quizlive_sound_enabled', String(this.enabled));
     }
     if (this.enabled) {
-      this.getAudioContext();
-      this.play('click');
+      this.init().then(() => this.play('click'));
     }
   }
 
@@ -47,209 +120,142 @@ class SoundService {
     return this.enabled;
   }
 
-  play(type) {
-    if (!this.enabled) return;
-    const ctx = this.getAudioContext();
-    if (!ctx) return;
+  setVolume(vol) {
+    this.volume = Math.max(0, Math.min(1, vol));
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('quizlive_sound_volume', String(this.volume));
+    }
+    if (this.masterGain) {
+      this.masterGain.volume.rampTo(Tone.gainToDb(this.volume), 0.05);
+    }
+  }
+
+  /**
+   * Play a game sound effect.
+   * @param {'click'|'join'|'start'|'tick'|'urgentTick'|'correct'|'wrong'|'reveal'|'timeUp'|'fanfare'} type
+   */
+  async play(type) {
+    if (!this.enabled || typeof window === 'undefined') return;
+
+    if (!this.isInitialized) {
+      await this.init();
+    }
 
     try {
-      const now = ctx.currentTime;
+      const now = Tone.now();
 
       switch (type) {
         case 'click': {
-          // Tactile button click
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(1200, now);
-          osc.frequency.exponentialRampToValueAtTime(400, now + 0.04);
-          gain.gain.setValueAtTime(0.12, now);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(now);
-          osc.stop(now + 0.05);
+          // Tactile modern UI tap
+          if (this.pluckSynth) {
+            this.pluckSynth.triggerAttack('G5', now);
+          }
           break;
         }
 
         case 'join': {
-          // Cheerful ascending bubble chime
-          const notes = [440, 659.25, 880];
-          notes.forEach((freq, idx) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            const t = now + idx * 0.07;
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(freq, t);
-            gain.gain.setValueAtTime(0.09, t);
-            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(t);
-            osc.stop(t + 0.17);
-          });
+          // Cheerful ascending bubble chime (C5, E5, G5, C6)
+          if (this.chimeSynth) {
+            this.chimeSynth.triggerAttackRelease('C5', '16n', now);
+            this.chimeSynth.triggerAttackRelease('E5', '16n', now + 0.06);
+            this.chimeSynth.triggerAttackRelease('G5', '16n', now + 0.12);
+            this.chimeSynth.triggerAttackRelease('C6', '8n', now + 0.18);
+          }
           break;
         }
 
         case 'start': {
-          // Quiz start energetic fanfare
-          const notes = [392.0, 523.25, 659.25, 783.99, 1046.5];
-          notes.forEach((freq, idx) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            const t = now + idx * 0.09;
-            osc.type = 'triangle';
-            osc.frequency.setValueAtTime(freq, t);
-            gain.gain.setValueAtTime(0.14, t);
-            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(t);
-            osc.stop(t + 0.32);
-          });
+          // Energetic game show launch fanfare: Bass kick + Bright poly chord
+          if (this.bassSynth) {
+            this.bassSynth.triggerAttackRelease('C2', '8n', now);
+          }
+          if (this.polySynth) {
+            this.polySynth.triggerAttackRelease(['G4', 'C5'], '16n', now);
+            this.polySynth.triggerAttackRelease(['A4', 'D5'], '16n', now + 0.08);
+            this.polySynth.triggerAttackRelease(['B4', 'E5'], '16n', now + 0.16);
+            this.polySynth.triggerAttackRelease(['C5', 'E5', 'G5', 'C6'], '4n', now + 0.24);
+          }
           break;
         }
 
         case 'tick': {
-          // Subtle countdown tick
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(800, now);
-          gain.gain.setValueAtTime(0.04, now);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(now);
-          osc.stop(now + 0.06);
+          // Subtle wooden metronome countdown tick
+          if (this.pluckSynth) {
+            this.pluckSynth.triggerAttack('C4', now);
+          }
           break;
         }
 
         case 'urgentTick': {
-          // Urgent double tick for final 5 seconds
-          [1200, 1600].forEach((freq, idx) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            const t = now + idx * 0.04;
-            osc.type = 'square';
-            osc.frequency.setValueAtTime(freq, t);
-            gain.gain.setValueAtTime(0.05, t);
-            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(t);
-            osc.stop(t + 0.05);
-          });
+          // Urgent double pulse for final 5 seconds
+          if (this.pluckSynth) {
+            this.pluckSynth.triggerAttack('G5', now);
+            this.pluckSynth.triggerAttack('C6', now + 0.06);
+          }
           break;
         }
 
         case 'correct': {
-          // Rewarding success chime
-          const notes = [587.33, 739.99, 880.0, 1174.66]; // D5, F#5, A5, D6
-          notes.forEach((freq, idx) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            const t = now + idx * 0.08;
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(freq, t);
-            gain.gain.setValueAtTime(0.18, t);
-            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(t);
-            osc.stop(t + 0.45);
-          });
+          // Rewarding triumphant chime (D5 -> F#5 -> A5 -> D6) with warm resonance
+          if (this.chimeSynth) {
+            this.chimeSynth.triggerAttackRelease('D5', '16n', now);
+            this.chimeSynth.triggerAttackRelease('F#5', '16n', now + 0.07);
+            this.chimeSynth.triggerAttackRelease('A5', '16n', now + 0.14);
+            this.chimeSynth.triggerAttackRelease(['D6', 'F#6'], '4n', now + 0.21);
+          }
           break;
         }
 
         case 'wrong': {
-          // Gentle low error thud
-          const osc1 = ctx.createOscillator();
-          const osc2 = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc1.type = 'sawtooth';
-          osc2.type = 'sine';
-          osc1.frequency.setValueAtTime(180, now);
-          osc1.frequency.linearRampToValueAtTime(110, now + 0.3);
-          osc2.frequency.setValueAtTime(170, now);
-          osc2.frequency.linearRampToValueAtTime(100, now + 0.3);
-
-          gain.gain.setValueAtTime(0.1, now);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
-
-          osc1.connect(gain);
-          osc2.connect(gain);
-          gain.connect(ctx.destination);
-
-          osc1.start(now);
-          osc2.start(now);
-          osc1.stop(now + 0.32);
-          osc2.stop(now + 0.32);
+          // Soft descending low-passed thud (clear feedback, not obnoxious)
+          if (this.polySynth) {
+            this.polySynth.triggerAttackRelease(['Eb3', 'G3'], '16n', now);
+            this.polySynth.triggerAttackRelease(['D3', 'F3'], '8n', now + 0.12);
+          }
+          if (this.bassSynth) {
+            this.bassSynth.triggerAttackRelease('F1', '8n', now + 0.05);
+          }
           break;
         }
 
         case 'reveal': {
-          // Shimmering chord reveal
-          const chords = [523.25, 659.25, 783.99, 1046.5]; // C major
-          chords.forEach((freq) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = 'triangle';
-            osc.frequency.setValueAtTime(freq, now);
-            gain.gain.setValueAtTime(0.08, now);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(now);
-            osc.stop(now + 0.65);
-          });
+          // Celestial shimmering major-7th chord for answer & leaderboard reveal
+          if (this.polySynth) {
+            this.polySynth.triggerAttackRelease(['C4', 'E4', 'G4', 'B4', 'D5'], '2n', now);
+          }
           break;
         }
 
         case 'timeUp': {
-          // Time expired alert
-          [400, 300].forEach((freq, idx) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            const t = now + idx * 0.15;
-            osc.type = 'sawtooth';
-            osc.frequency.setValueAtTime(freq, t);
-            gain.gain.setValueAtTime(0.1, t);
-            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(t);
-            osc.stop(t + 0.22);
-          });
+          // Time expired dramatic gong accent
+          if (this.bassSynth) {
+            this.bassSynth.triggerAttackRelease('G2', '4n', now);
+          }
+          if (this.polySynth) {
+            this.polySynth.triggerAttackRelease(['Db4', 'G4'], '8n', now);
+            this.polySynth.triggerAttackRelease(['C4', 'F#4'], '4n', now + 0.12);
+          }
           break;
         }
 
         case 'fanfare': {
-          // Grand celebration victory theme
-          const fanfare = [
-            { f: 523.25, t: 0, d: 0.15 },    // C5
-            { f: 523.25, t: 0.15, d: 0.15 }, // C5
-            { f: 523.25, t: 0.3, d: 0.15 },  // C5
-            { f: 659.25, t: 0.45, d: 0.3 },  // E5
-            { f: 587.33, t: 0.75, d: 0.15 }, // D5
-            { f: 659.25, t: 0.9, d: 0.15 },  // E5
-            { f: 783.99, t: 1.05, d: 0.55 }, // G5
-            { f: 1046.5, t: 1.6, d: 0.8 },   // C6
-          ];
-
-          fanfare.forEach((n) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            const startT = now + n.t;
-            osc.type = 'triangle';
-            osc.frequency.setValueAtTime(n.f, startT);
-            gain.gain.setValueAtTime(0.14, startT);
-            gain.gain.exponentialRampToValueAtTime(0.001, startT + n.d);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(startT);
-            osc.stop(startT + n.d + 0.05);
-          });
+          // Grand celebration victory theme for winners & podium
+          if (this.bassSynth) {
+            this.bassSynth.triggerAttackRelease('C2', '8n', now);
+            this.bassSynth.triggerAttackRelease('G2', '8n', now + 0.4);
+            this.bassSynth.triggerAttackRelease('C2', '4n', now + 0.8);
+          }
+          if (this.polySynth) {
+            // C - E - G - C arpeggio fanfare
+            this.polySynth.triggerAttackRelease('C5', '16n', now);
+            this.polySynth.triggerAttackRelease('C5', '16n', now + 0.1);
+            this.polySynth.triggerAttackRelease('C5', '16n', now + 0.2);
+            this.polySynth.triggerAttackRelease(['E5', 'G5'], '8n', now + 0.3);
+            this.polySynth.triggerAttackRelease(['D5', 'F5'], '16n', now + 0.5);
+            this.polySynth.triggerAttackRelease(['E5', 'G5'], '16n', now + 0.6);
+            this.polySynth.triggerAttackRelease(['G5', 'B5', 'D6'], '8n', now + 0.7);
+            this.polySynth.triggerAttackRelease(['C5', 'E5', 'G5', 'C6'], '2n', now + 0.95);
+          }
           break;
         }
 
@@ -257,7 +263,7 @@ class SoundService {
           break;
       }
     } catch {
-      // AudioContext blocked or restricted
+      // Audio playback safely ignored if blocked by browser policy
     }
   }
 }

@@ -10,7 +10,7 @@ const sequelize = new Sequelize(DB_NAME, DB_USER, DB_PASS, {
   dialect: 'mysql',
   logging: (msg) => logger.debug(msg),
   pool: {
-    max: 10,
+    max: parseInt(process.env.DB_POOL_MAX, 10) || 25,
     min: 0,
     idle: 10000,
     acquire: 30000,

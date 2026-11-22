@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Check, Send } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { getMediaUrl } from '../lib/utils';
+import TiltCard from './ui/TiltCard';
+import { staggerFadeUp, pulseElement } from '../lib/gsapUtils';
 
 // Kahoot-style vibrant colors for MCQs: red, blue, yellow, green
 const MCQ_COLORS = [
@@ -42,11 +44,25 @@ export default function QuestionCard({
 }) {
   const [textAnswer, setTextAnswer] = useState('');
   const [selectedPollIds, setSelectedPollIds] = useState([]);
+  const optionsGridRef = useRef(null);
+
+  useEffect(() => {
+    if (!optionsGridRef.current) return;
+    staggerFadeUp(optionsGridRef.current, '.option-card-anim', {
+      duration: 0.5,
+      stagger: 0.08,
+      y: 18,
+      ease: 'power3.out',
+    });
+  }, [question?.id]);
 
   if (!question) return null;
 
-  const handleSelectOption = (optionId) => {
+  const handleSelectOption = (optionId, event) => {
     if (answered) return;
+    if (event?.currentTarget) {
+      pulseElement(event.currentTarget, { scale: 1.05, duration: 0.3 });
+    }
     onAnswer({ optionId });
   };
 
@@ -95,7 +111,7 @@ export default function QuestionCard({
       </div>
 
       {/* Answer Options Area */}
-      <div className="w-full">
+      <div ref={optionsGridRef} className="w-full">
         {/* MCQ Style Grid (4 colors) */}
         {question.type === 'mcq' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -104,39 +120,40 @@ export default function QuestionCard({
               const isSelected = selectedOptionId === opt.id;
 
               return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  disabled={answered}
-                  onClick={() => handleSelectOption(opt.id)}
-                  className={`min-h-[72px] sm:min-h-[88px] rounded-2xl p-4 text-white font-bold text-lg sm:text-xl shadow-lg
-                    flex flex-col justify-between text-left transition-all duration-200 cursor-pointer
-                    ${color.bg} ${isSelected ? color.selected + ' scale-[0.98] ring-offset-2' : ''}
-                    ${answered && !isSelected ? 'opacity-40 grayscale-[20%]' : ''}
-                    active:scale-95`}
-                >
-                  <div className="w-full flex items-center justify-between">
-                    <span className="flex items-center gap-3">
-                      <span className="text-2xl opacity-80">{color.shape}</span>
-                      {opt.text && <span className="break-words leading-tight">{opt.text}</span>}
-                    </span>
-                    {isSelected && (
-                      <span className="bg-white/20 p-2 rounded-full animate-bounce shrink-0">
-                        <Check className="w-6 h-6 text-white" />
+                <TiltCard key={opt.id} maxTilt={3.5} scale={1.015} className="option-card-anim">
+                  <button
+                    type="button"
+                    disabled={answered}
+                    onClick={(e) => handleSelectOption(opt.id, e)}
+                    className={`w-full min-h-[72px] sm:min-h-[88px] rounded-2xl p-4 text-white font-bold text-lg sm:text-xl shadow-lg
+                      flex flex-col justify-between text-left transition-all duration-200 cursor-pointer
+                      ${color.bg} ${isSelected ? color.selected + ' scale-[0.98] ring-offset-2' : ''}
+                      ${answered && !isSelected ? 'opacity-40 grayscale-[20%]' : ''}
+                      active:scale-95`}
+                  >
+                    <div className="w-full flex items-center justify-between">
+                      <span className="flex items-center gap-3">
+                        <span className="text-2xl opacity-80">{color.shape}</span>
+                        {opt.text && <span className="break-words leading-tight">{opt.text}</span>}
                       </span>
-                    )}
-                  </div>
-
-                  {opt.media_url && (
-                    <div className="w-full h-28 sm:h-32 mt-2 rounded-xl overflow-hidden bg-black/20 flex items-center justify-center p-1">
-                      <img
-                        src={getMediaUrl(opt.media_url)}
-                        alt={opt.text || `Option ${idx + 1}`}
-                        className="w-full h-full object-contain rounded-lg"
-                      />
+                      {isSelected && (
+                        <span className="bg-white/20 p-2 rounded-full animate-bounce shrink-0">
+                          <Check className="w-6 h-6 text-white" />
+                        </span>
+                      )}
                     </div>
-                  )}
-                </button>
+
+                    {opt.media_url && (
+                      <div className="w-full h-28 sm:h-32 mt-2 rounded-xl overflow-hidden bg-black/20 flex items-center justify-center p-1">
+                        <img
+                          src={getMediaUrl(opt.media_url)}
+                          alt={opt.text || `Option ${idx + 1}`}
+                          className="w-full h-full object-contain rounded-lg"
+                        />
+                      </div>
+                    )}
+                  </button>
+                </TiltCard>
               );
             })}
           </div>
@@ -153,20 +170,21 @@ export default function QuestionCard({
                 : 'bg-rose-600 hover:bg-rose-700';
 
               return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  disabled={answered}
-                  onClick={() => handleSelectOption(opt.id)}
-                  className={`min-h-[80px] sm:min-h-[100px] rounded-2xl p-5 text-white font-extrabold text-2xl shadow-xl
-                    flex items-center justify-center gap-3 transition-all duration-200 cursor-pointer
-                    ${bgClass} ${isSelected ? 'ring-4 ring-white scale-[0.98]' : ''}
-                    ${answered && !isSelected ? 'opacity-40' : ''}
-                    active:scale-95`}
-                >
-                  <span>{opt.text}</span>
-                  {isSelected && <Check className="w-7 h-7 text-white animate-bounce" />}
-                </button>
+                <TiltCard key={opt.id} maxTilt={3.5} scale={1.015} className="option-card-anim">
+                  <button
+                    type="button"
+                    disabled={answered}
+                    onClick={(e) => handleSelectOption(opt.id, e)}
+                    className={`w-full min-h-[80px] sm:min-h-[100px] rounded-2xl p-5 text-white font-extrabold text-2xl shadow-xl
+                      flex items-center justify-center gap-3 transition-all duration-200 cursor-pointer
+                      ${bgClass} ${isSelected ? 'ring-4 ring-white scale-[0.98]' : ''}
+                      ${answered && !isSelected ? 'opacity-40' : ''}
+                      active:scale-95`}
+                  >
+                    <span>{opt.text}</span>
+                    {isSelected && <Check className="w-7 h-7 text-white animate-bounce" />}
+                  </button>
+                </TiltCard>
               );
             })}
           </div>

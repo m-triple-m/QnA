@@ -10,6 +10,7 @@ import sound from '../../lib/sound';
 import { getMediaUrl } from '../../lib/utils';
 import { Sparkles, Trophy, Users, Award, CheckCircle2, XCircle, Gamepad2, AlertTriangle, ArrowLeft, Cloud, Send, MessageSquare } from 'lucide-react';
 import toast from 'react-hot-toast';
+import AnimatedNumber from '@/components/ui/AnimatedNumber';
 
 export default function PlayPage() {
   const params = useParams();
@@ -203,9 +204,10 @@ export default function PlayPage() {
 
     const handleOpenQuestion = (data) => {
       setOpenQuestion(data);
-      if (data.mySubmissions) {
-        setOpenSubmissions(data.mySubmissions);
-      }
+      // Clean slate for each question: reset submissions so every question counts individual attempts!
+      setOpenSubmissions(Array.isArray(data.mySubmissions) ? data.mySubmissions : []);
+      setOpenAnswerInput('');
+      setSubmittingOpen(false);
       setPhase('open_question');
       sound.play('start');
     };
@@ -229,6 +231,22 @@ export default function PlayPage() {
       toast('Responses reset for this question', { icon: '🔄' });
     };
 
+    const handleOpenStopped = () => {
+      setOpenQuestion(null);
+      setOpenSubmissions([]);
+      setOpenAnswerInput('');
+      setPhase('waiting');
+      toast('Host has paused/stopped this question. Waiting for next question...', { icon: '⏳' });
+    };
+
+    const handleOpenPollEnded = (data) => {
+      setOpenQuestion(null);
+      setFinalResult(data || { message: 'The Live Open Poll has ended!' });
+      setPhase('ended');
+      sound.play('fanfare');
+      toast('The Live Open Poll has ended. Thank you!', { icon: '🎉' });
+    };
+
     socket.on('session:joined', handleJoined);
     socket.on('session:started', handleStarted);
     socket.on('session:question', handleQuestion);
@@ -242,6 +260,8 @@ export default function PlayPage() {
     socket.on('open_answer:accepted', handleOpenAccepted);
     socket.on('session:open_question_closed', handleOpenClosed);
     socket.on('session:open_word_cloud_cleared', handleOpenCleared);
+    socket.on('session:open_question_stopped', handleOpenStopped);
+    socket.on('session:open_poll_ended', handleOpenPollEnded);
     socket.on('error', handleError);
     socket.on('connect_error', handleConnectError);
     socket.on('reconnect', handleReconnect);
@@ -261,6 +281,8 @@ export default function PlayPage() {
       socket.off('open_answer:accepted', handleOpenAccepted);
       socket.off('session:open_question_closed', handleOpenClosed);
       socket.off('session:open_word_cloud_cleared', handleOpenCleared);
+      socket.off('session:open_question_stopped', handleOpenStopped);
+      socket.off('session:open_poll_ended', handleOpenPollEnded);
       socket.off('error', handleError);
       socket.off('connect_error', handleConnectError);
       socket.off('reconnect', handleReconnect);
@@ -334,7 +356,7 @@ export default function PlayPage() {
           <SoundToggle isDark={true} />
           <div className="px-3 py-1 rounded-full bg-purple-950/60 border border-purple-500/30 text-xs font-bold text-yellow-300 flex items-center gap-1.5">
             <Trophy className="w-3.5 h-3.5 text-yellow-400" />
-            <span>{totalScore} pts</span>
+            <AnimatedNumber value={totalScore} suffix=" pts" />
           </div>
           <div className="hidden sm:block text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300">
             {nickname}
@@ -395,7 +417,9 @@ export default function PlayPage() {
                 You're in, <span className="text-yellow-300">{nickname}</span>!
               </h2>
               <p className="text-base sm:text-lg text-slate-300 font-medium">
-                Waiting for the host to start the quiz...
+                {quizTitle?.toLowerCase().includes('word cloud') || quizTitle?.toLowerCase().includes('open')
+                  ? 'Waiting for the host to start the poll...'
+                  : 'Waiting for the host to start the quiz...'}
               </p>
             </div>
 
@@ -406,7 +430,9 @@ export default function PlayPage() {
                 <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
               </span>
               <span className="text-sm font-semibold text-slate-200">
-                Get ready to answer fast for bonus points!
+                {quizTitle?.toLowerCase().includes('word cloud') || quizTitle?.toLowerCase().includes('open')
+                  ? 'Your responses will appear live on the audience screen!'
+                  : 'Get ready to answer fast for bonus points!'}
               </span>
             </div>
           </div>
@@ -627,10 +653,10 @@ export default function PlayPage() {
                     CORRECT!
                   </h3>
                   <div className="my-3 inline-block px-4 py-2 rounded-2xl bg-emerald-500/20 text-emerald-300 text-2xl font-black animate-scale-up">
-                    +{answerResult.pointsAwarded || 0} pts
+                    +<AnimatedNumber value={answerResult.pointsAwarded || 0} /> pts
                   </div>
                   <p className="text-sm text-slate-300">
-                    Total Score: <span className="font-extrabold text-white">{totalScore}</span>
+                    Total Score: <span className="font-extrabold text-white"><AnimatedNumber value={totalScore} /></span>
                   </p>
                 </div>
               ) : (
@@ -646,7 +672,7 @@ export default function PlayPage() {
                     {answered ? 'Better luck on the next one!' : "Time's up before you answered!"}
                   </p>
                   <p className="text-sm text-slate-400 mt-1">
-                    Total Score: <span className="font-extrabold text-white">{totalScore}</span>
+                    Total Score: <span className="font-extrabold text-white"><AnimatedNumber value={totalScore} /></span>
                   </p>
                 </div>
               )
@@ -719,47 +745,71 @@ export default function PlayPage() {
 
             <div className="space-y-2">
               <h2 className="text-3xl sm:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-pink-400 to-purple-400">
-                Quiz Finished!
+                {finalResult?.topWords ? 'Live Poll Ended!' : 'Quiz Finished!'}
               </h2>
               <p className="text-base text-slate-300">
-                Great game, <span className="font-bold text-white">{nickname}</span>!
+                {finalResult?.topWords
+                  ? `Thank you for sharing your thoughts, ${nickname}!`
+                  : `Great game, ${nickname}!`}
               </p>
             </div>
 
-            {/* Final Personal Score Banner */}
-            <div className="bg-slate-800/90 border border-slate-700 rounded-3xl p-6 shadow-xl flex justify-around items-center">
-              <div>
-                <span className="text-xs uppercase tracking-wider text-slate-400 font-bold block">
-                  Final Rank
+            {/* If Open Poll Ended: show top responses summary */}
+            {finalResult?.topWords ? (
+              <div className="bg-slate-800/90 border border-slate-700 rounded-3xl p-6 shadow-xl space-y-4">
+                <span className="text-xs uppercase tracking-wider text-cyan-400 font-bold block">
+                  Top Audience Responses
                 </span>
-                <span className="text-3xl font-black text-yellow-300">
-                  {myRankEntry ? `#${myRankEntry.rank}` : '-'}
-                </span>
+                <div className="flex flex-wrap gap-2 justify-center">
+                  {finalResult.topWords.map((tw, i) => (
+                    <span
+                      key={i}
+                      className="px-3 py-1.5 rounded-xl bg-purple-500/20 text-purple-200 border border-purple-500/30 text-sm font-bold flex items-center gap-1.5"
+                    >
+                      <span>"{tw.text}"</span>
+                      <span className="text-xs text-yellow-300 font-extrabold">({tw.count})</span>
+                    </span>
+                  ))}
+                </div>
               </div>
-              <div className="w-px h-10 bg-slate-700" />
-              <div>
-                <span className="text-xs uppercase tracking-wider text-slate-400 font-bold block">
-                  Total Score
-                </span>
-                <span className="text-3xl font-black text-emerald-400">
-                  {totalScore} <span className="text-sm font-normal text-slate-400">pts</span>
-                </span>
+            ) : (
+              /* Final Personal Score Banner */
+              <div className="bg-slate-800/90 border border-slate-700 rounded-3xl p-6 shadow-xl flex justify-around items-center">
+                <div>
+                  <span className="text-xs uppercase tracking-wider text-slate-400 font-bold block">
+                    Final Rank
+                  </span>
+                  <span className="text-3xl font-black text-yellow-300">
+                    {myRankEntry ? `#${myRankEntry.rank}` : '-'}
+                  </span>
+                </div>
+                <div className="w-px h-10 bg-slate-700" />
+                <div>
+                  <span className="text-xs uppercase tracking-wider text-slate-400 font-bold block">
+                    Total Score
+                  </span>
+                  <span className="text-3xl font-black text-emerald-400">
+                    {totalScore} <span className="text-sm font-normal text-slate-400">pts</span>
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Final Leaderboard */}
-            <div className="text-left mt-6">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3 text-center">
-                Final Leaderboard
-              </h3>
-              <Leaderboard leaderboard={leaderboardData} currentNickname={nickname} />
-            </div>
+            {/* Final Leaderboard if competitive quiz */}
+            {!finalResult?.topWords && (
+              <div className="text-left mt-6">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3 text-center">
+                  Final Leaderboard
+                </h3>
+                <Leaderboard leaderboard={leaderboardData} currentNickname={nickname} />
+              </div>
+            )}
 
             <button
               onClick={() => navigate(`/join`)}
               className="w-full h-14 min-h-[48px] rounded-2xl bg-purple-600 hover:bg-purple-700 font-bold text-lg text-white shadow-lg transition active:scale-95"
             >
-              Play Another Quiz
+              Join Another Session
             </button>
           </div>
         )}

@@ -6,10 +6,12 @@ export default defineConfig({
   plugins: [react()],
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
   server: {
+    host: '0.0.0.0', // Listen on all network interfaces so LAN devices (phones, laptops) can connect
+    port: 5173,
     proxy: {
-      '/api': 'http://192.168.18.61:5000',
-      '/uploads': 'http://192.168.18.61:5000',
-      '/socket.io': { target: 'http://192.168.18.61:5000', ws: true }
+      '/api': 'http://127.0.0.1:5000',
+      '/uploads': 'http://127.0.0.1:5000',
+      '/socket.io': { target: 'http://127.0.0.1:5000', ws: true }
     }
   }
 })

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
@@ -7,6 +7,10 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDashboardStats, getRecentSessions } from '@/api/endpoints';
+import AnimatedNumber from '@/components/ui/AnimatedNumber';
+import MagneticButton from '@/components/ui/MagneticButton';
+import TiltCard from '@/components/ui/TiltCard';
+import { staggerFadeUp } from '@/lib/gsapUtils';
 
 const statusColors = {
   waiting: 'bg-yellow-100 text-yellow-700',
@@ -16,19 +20,23 @@ const statusColors = {
 
 function StatCard({ icon: Icon, label, value, color, loading }) {
   return (
-    <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center gap-4">
-      <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${color}`}>
-        <Icon className="w-7 h-7" />
+    <TiltCard maxTilt={5} scale={1.02} className="h-full">
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center gap-4 h-full transition-shadow hover:shadow-md">
+        <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${color} shrink-0`}>
+          <Icon className="w-7 h-7" />
+        </div>
+        <div>
+          <p className="text-sm text-gray-500 font-medium">{label}</p>
+          {loading ? (
+            <div className="h-7 w-16 bg-gray-200 rounded animate-pulse mt-1" />
+          ) : (
+            <p className="text-3xl font-bold text-gray-800">
+              <AnimatedNumber value={value ?? 0} />
+            </p>
+          )}
+        </div>
       </div>
-      <div>
-        <p className="text-sm text-gray-500 font-medium">{label}</p>
-        {loading ? (
-          <div className="h-7 w-16 bg-gray-200 rounded animate-pulse mt-1" />
-        ) : (
-          <p className="text-3xl font-bold text-gray-800">{value ?? 0}</p>
-        )}
-      </div>
-    </div>
+    </TiltCard>
   );
 }
 
@@ -40,18 +48,44 @@ export default function HostDashboard() {
   const [sessions, setSessions] = useState([]);
   const [loadingStats, setLoadingStats] = useState(true);
   const [loadingSessions, setLoadingSessions] = useState(true);
+  const statsContainerRef = useRef(null);
+  const sessionsContainerRef = useRef(null);
 
   useEffect(() => {
     getDashboardStats()
-      .then(setStats)
+      .then((data) => {
+        setStats(data);
+      })
       .catch(() => toast.error('Failed to load stats'))
       .finally(() => setLoadingStats(false));
 
     getRecentSessions(5)
-      .then(setSessions)
+      .then((data) => {
+        setSessions(data);
+      })
       .catch(() => toast.error('Failed to load recent sessions'))
       .finally(() => setLoadingSessions(false));
   }, []);
+
+  useEffect(() => {
+    if (!loadingStats && statsContainerRef.current) {
+      staggerFadeUp(statsContainerRef.current, ':scope > div', {
+        duration: 0.55,
+        stagger: 0.08,
+        y: 16,
+      });
+    }
+  }, [loadingStats]);
+
+  useEffect(() => {
+    if (!loadingSessions && sessionsContainerRef.current) {
+      staggerFadeUp(sessionsContainerRef.current, '.session-row-anim', {
+        duration: 0.5,
+        stagger: 0.06,
+        y: 14,
+      });
+    }
+  }, [loadingSessions]);
 
   const formatDate = (d) =>
     new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -67,7 +101,7 @@ export default function HostDashboard() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div ref={statsContainerRef} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard
           icon={BookOpen}
           label="Total Quizzes"
@@ -95,34 +129,34 @@ export default function HostDashboard() {
       <div>
         <h2 className="text-lg font-bold text-gray-700 mb-3">Quick Actions</h2>
         <div className="flex flex-wrap gap-3">
-          <button
+          <MagneticButton
             onClick={() => navigate('/host/quizzes/new')}
             className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold px-5 py-2.5 rounded-xl shadow-sm transition"
           >
             <Plus className="w-5 h-5" />
             Create New Quiz
-          </button>
-          <button
+          </MagneticButton>
+          <MagneticButton
             onClick={() => navigate('/host/open-qna')}
             className="flex items-center gap-2 bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white font-semibold px-5 py-2.5 rounded-xl shadow-sm transition"
           >
             <Cloud className="w-5 h-5 text-cyan-200" />
             Live Word Cloud Q&A
-          </button>
-          <button
+          </MagneticButton>
+          <MagneticButton
             onClick={() => navigate('/host/quizzes')}
             className="flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 font-semibold px-5 py-2.5 rounded-xl shadow-sm border border-gray-200 transition"
           >
             <BookOpen className="w-5 h-5 text-purple-500" />
             View All Quizzes
-          </button>
-          <button
+          </MagneticButton>
+          <MagneticButton
             onClick={() => navigate('/host/sessions')}
             className="flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 font-semibold px-5 py-2.5 rounded-xl shadow-sm border border-gray-200 transition"
           >
             <TrendingUp className="w-5 h-5 text-blue-500" />
             View Sessions
-          </button>
+          </MagneticButton>
         </div>
       </div>
 
@@ -149,9 +183,9 @@ export default function HostDashboard() {
               <p className="text-sm text-gray-400">Start your first quiz session!</p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-50">
+            <div ref={sessionsContainerRef} className="divide-y divide-gray-50">
               {sessions.map((session) => (
-                <div key={session.id} className="flex items-center gap-4 px-6 py-4 hover:bg-gray-50 transition">
+                <div key={session.id} className="session-row-anim flex items-center gap-4 px-6 py-4 hover:bg-gray-50 transition">
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-gray-800 truncate">
                       {session.quiz?.title ?? 'Untitled Quiz'}

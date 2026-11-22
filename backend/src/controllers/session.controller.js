@@ -21,6 +21,27 @@ async function generateUniqueCode() {
 }
 
 /**
+ * Dynamically resolves the client base URL for join links & QR codes.
+ * In development / LAN mode, dynamically matches the requesting origin
+ * (e.g. http://192.168.3.140:5173) so phones on the Wi-Fi scan the local server.
+ */
+function getClientBaseUrl(req) {
+  if (req && req.headers && req.headers.origin) {
+    return req.headers.origin.replace(/\/+$/, '');
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    const origins = (process.env.CLIENT_URL || '')
+      .split(',')
+      .map((u) => u.trim().replace(/\/+$/, ''))
+      .filter(Boolean);
+    const lanOrigin = origins.find((u) => !u.includes('digipodium.com'));
+    if (lanOrigin) return lanOrigin;
+  }
+  const first = (process.env.CLIENT_URL || '').split(',')[0].trim().replace(/\/+$/, '');
+  return first || 'http://localhost:5173';
+}
+
+/**
  * POST /sessions  — host creates a session
  */
 async function createSession(req, res) {
@@ -31,7 +52,8 @@ async function createSession(req, res) {
   if (quiz.host_id !== req.user.id) return res.status(403).json({ success: false, message: 'Forbidden' });
 
   const code = await generateUniqueCode();
-  const joinUrl = `${process.env.CLIENT_URL}/join/${code}`;
+  const clientBase = getClientBaseUrl(req);
+  const joinUrl = `${clientBase}/join/${code}`;
   const qr_data = await generateQRCode(joinUrl);
 
   const session = await Session.create({ quiz_id, code, qr_data });
@@ -52,7 +74,7 @@ async function createOpenPollSession(req, res) {
   });
 
   const code = await generateUniqueCode();
-  const clientBase = (process.env.CLIENT_URL || '').split(',')[0].trim() || 'http://localhost:5173';
+  const clientBase = getClientBaseUrl(req);
   const joinUrl = `${clientBase}/join/${code}`;
   const qr_data = await generateQRCode(joinUrl);
 
@@ -202,4 +224,33 @@ async function getHostSessions(req, res) {
   });
 }
 
-module.exports = { createSession, createOpenPollSession, getJoinInfo, getSessionResults, exportSessionResults, getHostSessions };
+/**
+ * GET /sessions/:id — get a single session by ID
+ */
+async function getSessionById(req, res) {
+  const session = await Session.findOne({
+    where: { id: req.params.id },
+    include: [{ model: Quiz, as: 'quiz' }],
+  });
+  if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
+  if (session.quiz && session.quiz.host_id !== req.user.id) {
+    return res.status(403).json({ success: false, message: 'Forbidden' });
+  }
+
+  // Ensure qr_data exists if it was null
+  if (!session.qr_data && session.code) {
+    const clientBase = getClientBaseUrl(req);
+    session.qr_data = await generateQRCode(`${clientBase}/join/${session.code}`);
+    await session.save();
+  }
+
+  // Also include current participants so host immediately sees connected audience
+  const participants = await Participant.findAll({
+    where: { session_id: session.id },
+    order: [['joined_at', 'ASC']],
+  });
+
+  return res.status(200).json({ success: true, data: { session, participants }, message: 'Session fetched' });
+}
+
+module.exports = { createSession, createOpenPollSession, getJoinInfo, getSessionResults, exportSessionResults, getHostSessions, getSessionById };

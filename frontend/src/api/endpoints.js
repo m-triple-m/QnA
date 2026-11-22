@@ -41,6 +41,12 @@ export const createSession = (quizIdOrData) => {
   return api.post('/sessions', payload).then(res => res.data?.data?.session || res.data?.session || res.data);
 };
 export const createOpenPollSession = () => api.post('/sessions/open-poll').then(res => res.data?.data || res.data);
+export const getSessionById = (id) => api.get(`/sessions/${id}`).then(res => {
+  if (res.data?.data?.session) {
+    return { ...res.data.data.session, participants: res.data.data.participants || [] };
+  }
+  return res.data?.session || res.data;
+});
 export const getJoinInfo = (code) => api.get(`/sessions/${code}/join`).then(res => res.data?.data || res.data);
 export const getSessionResults = (id) => api.get(`/sessions/${id}/results`).then(res => res.data?.data || res.data);
 export const exportSessionResults = (id) => api.get(`/sessions/${id}/export`, { responseType: 'blob' });
@@ -87,3 +93,4 @@ export const getAdminUsers = (page = 1, limit = 10) => api.get('/admin/users', {
 export const updateAdminUser = (id, data) => api.put(`/admin/users/${id}`, data).then(res => res.data?.data || res.data);
 export const deleteAdminUser = (id, hard = true) => api.delete(`/admin/users/${id}${hard ? '?hard=true' : ''}`).then(res => res.data?.data || res.data);
 export const getAdminQuizzes = (page = 1, limit = 10) => api.get('/admin/quizzes', { params: { page, limit } }).then(res => res.data?.data || res.data);
+

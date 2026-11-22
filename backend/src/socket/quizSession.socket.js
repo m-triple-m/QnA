@@ -46,7 +46,7 @@ module.exports = function(io) {
         socket.emit('session:state', { session, participants: participantsWithStatus });
 
         // If an open question is active, send it and current word cloud to host immediately
-        if (store.openQuestion) {
+        if (store.openQuestion && store.openQuestion.isOpen) {
           const wordsArray = Array.from(store.openQuestion.wordCounts.values()).map((w) => ({
             id: w.id,
             text: w.text,
@@ -334,7 +334,7 @@ module.exports = function(io) {
         sessionStore.set(Number(sessionId), store);
 
         // Broadcast to all participants and host in session room
-        io.to(`session:${sessionId}`).emit('session:open_question', {
+        const openQPayload = {
           id: openQ.id,
           text: openQ.text,
           allowCustom: openQ.allowCustom,
@@ -343,7 +343,9 @@ module.exports = function(io) {
           options: openQ.options,
           timeLimitSec: openQ.timeLimitSec,
           isOpen: true,
-        });
+        };
+        io.to(`session:${sessionId}`).emit('session:open_question', openQPayload);
+        io.to(`host:${sessionId}`).emit('session:open_question', openQPayload);
 
         // Auto close after time limit if set
         if (openQ.timeLimitSec > 0) {
@@ -383,6 +385,58 @@ module.exports = function(io) {
         store.openQuestion.totalSubmissions = 0;
         io.to(`session:${sessionId}`).emit('session:open_word_cloud_cleared', { questionId: store.openQuestion.id });
         logger.info(`Session ${sessionId} open question word cloud cleared`);
+      }
+    });
+
+    // Host stops/dismisses the active open question (returns room to lobby/standby)
+    socket.on('host:stop_open_question', ({ sessionId }) => {
+      const store = sessionStore.get(Number(sessionId));
+      if (store) {
+        if (store.openQuestionTimer) clearTimeout(store.openQuestionTimer);
+        store.openQuestion = null;
+        io.to(`session:${sessionId}`).emit('session:open_question_stopped');
+        logger.info(`Session ${sessionId} open question stopped/dismissed by host`);
+      }
+    });
+
+    // Host ends the entire open poll session
+    socket.on('host:end_open_poll', async ({ sessionId }) => {
+      try {
+        const store = sessionStore.get(Number(sessionId));
+        if (store?.openQuestionTimer) clearTimeout(store.openQuestionTimer);
+
+        const finalWords = store?.openQuestion
+          ? Array.from(store.openQuestion.wordCounts.values()).map((w) => ({
+              id: w.id,
+              text: w.text,
+              count: w.count,
+              voters: Array.from(w.voters),
+              isOption: w.isOption,
+            })).sort((a, b) => b.count - a.count)
+          : [];
+        const totalSubs = store?.openQuestion?.totalSubmissions || 0;
+        const totalParticipants = store?.openQuestion?.answers?.size || 0;
+
+        sessionStore.delete(Number(sessionId));
+
+        const session = await Session.findByPk(sessionId);
+        if (session) {
+          await session.update({ status: 'ended', ended_at: new Date() });
+        }
+
+        io.to(`session:${sessionId}`).emit('session:open_poll_ended', {
+          message: 'The Live Open Poll has ended. Thank you for participating!',
+          totalSubmissions: totalSubs,
+          totalParticipants,
+          topWords: finalWords.slice(0, 5),
+        });
+        io.to(`session:${sessionId}`).emit('session:ended', {
+          message: 'The Live Open Poll has ended.',
+        });
+        logger.info(`Session ${sessionId} open poll ended by host`);
+      } catch (err) {
+        logger.error('host:end_open_poll error', err);
+        socket.emit('error', { message: 'Failed to end open poll' });
       }
     });
 
@@ -443,7 +497,7 @@ module.exports = function(io) {
 
         // If an open question is active, send it immediately to participant
         const store = sessionStore.get(session.id);
-        if (store && store.openQuestion) {
+        if (store && store.openQuestion && store.openQuestion.isOpen) {
           const pAnswers = store.openQuestion.answers.get(participant.id) || [];
           socket.emit('session:open_question', {
             id: store.openQuestion.id,
@@ -460,12 +514,14 @@ module.exports = function(io) {
 
         // Notify host of new participant with their ID and initial score
         const count = await Participant.count({ where: { session_id: session.id } });
-        io.to(`host:${session.id}`).emit('session:participant_joined', {
+        const joinedPayload = {
           participantId: participant.id,
           nickname: cleanNickname,
           score: participant.score || 0,
           participantCount: count,
-        });
+        };
+        io.to(`session:${session.id}`).emit('session:participant_joined', joinedPayload);
+        io.to(`host:${session.id}`).emit('session:participant_joined', joinedPayload);
         logger.info(`Participant "${cleanNickname}" joined session ${session.id} (PIN: ${cleanCode})`);
       } catch (err) {
         logger.error('participant:join error', err);
@@ -637,6 +693,7 @@ module.exports = function(io) {
         });
 
         socket.emit('open_answer:accepted', {
+          questionId: openQ.id,
           submittedCount: pAnswers.length,
           maxSubmissions: openQ.maxSubmissions,
           answerText: displayText,

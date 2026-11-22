@@ -8,13 +8,19 @@ import {
   FastForward, Award, Sparkles, RefreshCw, X, Radio, Cloud, LayoutGrid
 } from 'lucide-react';
 import { useSocketContext } from '@/contexts/SocketContext';
-import { exportSessionResults } from '@/api/endpoints';
+import { exportSessionResults, getSessionById } from '@/api/endpoints';
 import sound from '@/lib/sound';
 import SoundToggle from '@/components/SoundToggle';
 import ParticipantMiniScreen from '@/components/ParticipantMiniScreen';
 import HostParticipantSidebar from '@/components/HostParticipantSidebar';
 import InteractiveWordCloud from '@/components/InteractiveWordCloud';
+import DraggableQRCode from '@/components/DraggableQRCode';
+import QRCode from 'react-qr-code';
 import { getMediaUrl } from '@/lib/utils';
+import AnimatedNumber from '@/components/ui/AnimatedNumber';
+import MagneticButton from '@/components/ui/MagneticButton';
+import TiltCard from '@/components/ui/TiltCard';
+import { staggerFadeUp, pulseElement } from '@/lib/gsapUtils';
 
 // Kahoot geometric shape themes
 const OPTION_STYLES = [
@@ -46,7 +52,7 @@ export default function HostSessionPage() {
   // Presentation / Slide mode controls
   const [isSlideMode, setIsSlideMode] = useState(true);
   const [showSlideLeaderboard, setShowSlideLeaderboard] = useState(false);
-  const [showQROverlay, setShowQROverlay] = useState(false);
+  const [showQROverlay, setShowQROverlay] = useState(true);
   const [showMiniScreen, setShowMiniScreen] = useState(false);
   const [showSidebar, setShowSidebar] = useState(() => {
     return localStorage.getItem('quizlive_host_sidebar') !== 'false';
@@ -63,6 +69,29 @@ export default function HostSessionPage() {
 
   const timerRef = useRef(null);
   const containerRef = useRef(null);
+  const hostOptionsGridRef = useRef(null);
+  const scoreboardRef = useRef(null);
+
+  useEffect(() => {
+    if (hostOptionsGridRef.current && currentQuestion?.options?.length) {
+      staggerFadeUp(hostOptionsGridRef.current, '.host-grid-option-anim', {
+        duration: 0.5,
+        stagger: 0.08,
+        y: 20,
+        ease: 'power3.out',
+      });
+    }
+  }, [currentQuestion?.id, answerViewMode]);
+
+  useEffect(() => {
+    if (showSlideLeaderboard && scoreboardRef.current) {
+      staggerFadeUp(scoreboardRef.current, '.scoreboard-row-anim', {
+        duration: 0.5,
+        stagger: 0.06,
+        y: 16,
+      });
+    }
+  }, [showSlideLeaderboard]);
 
   const isAnswerRevealed = Boolean(timeUpData?.correctOptions?.length);
   const isVotingClosed = timeRemaining === 0 || Boolean(timeUpData?.votingClosed) || isAnswerRevealed;
@@ -112,9 +141,17 @@ export default function HostSessionPage() {
       return;
     }
 
+    // Immediately fetch session info over HTTP in parallel with socket
+    getSessionById(sessionId)
+      .then((sess) => {
+        if (sess) setSession((prev) => prev || sess);
+      })
+      .catch((err) => console.warn('HTTP session fetch fallback:', err));
+
     // Join room
     socket.emit('host:join_session', { token, sessionId: Number(sessionId) });
-    socket.emit('host:set_auto_reveal', { sessionId: Number(sessionId), autoReveal });
+    const initialAutoReveal = localStorage.getItem('quizlive_auto_reveal') === 'true';
+    socket.emit('host:set_auto_reveal', { sessionId: Number(sessionId), autoReveal: initialAutoReveal });
 
     // Handle initial state
     socket.on('session:state', ({ session: initialSession, participants: initialParticipants }) => {
@@ -266,7 +303,7 @@ export default function HostSessionPage() {
       socket.off('session:ended');
       socket.off('error');
     };
-  }, [sessionId, getSocket, navigate, soundMuted, autoReveal]);
+  }, [sessionId, getSocket, navigate]);
 
   // Host Actions
   const handleStartQuiz = useCallback(() => {
@@ -589,31 +626,14 @@ export default function HostSessionPage() {
       </header>
 
       {/* ──────────────────────────────────────────────────────────── */}
-      {/* QUICK QR FLOATING MODAL (For Late Joiners) */}
+      {/* DRAGGABLE & FLOATING LIVE QR CODE (For Late Joiners) */}
       {/* ──────────────────────────────────────────────────────────── */}
-      {showQROverlay && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-white/20 text-white p-8 rounded-3xl max-w-md w-full text-center relative shadow-2xl animate-fade-in">
-            <button
-              onClick={() => setShowQROverlay(false)}
-              className="absolute top-4 right-4 p-2 text-gray-400 hover:text-white rounded-full bg-white/10 transition"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <h3 className="text-2xl font-black mb-2">Scan to Join Quiz!</h3>
-            <p className="text-sm text-gray-400 mb-6">Open phone camera or navigate to the URL below</p>
-            {session?.qr_data && (
-              <div className="p-4 bg-white rounded-2xl inline-block mb-4 shadow-lg">
-                <img src={session.qr_data} alt="QR Code" className="w-56 h-56 object-contain" />
-              </div>
-            )}
-            <div className="bg-white/10 p-3 rounded-2xl font-mono text-xl font-black tracking-widest text-purple-300 mb-4">
-              PIN: {session?.code}
-            </div>
-            <p className="text-xs text-gray-400 font-mono truncate">{joinUrl}</p>
-          </div>
-        </div>
-      )}
+      <DraggableQRCode
+        qrData={session?.qr_data}
+        code={session?.code}
+        isOpen={showQROverlay}
+        onClose={() => setShowQROverlay(false)}
+      />
 
       {/* ──────────────────────────────────────────────────────────── */}
       {/* MAIN VIEWPORT WITH PARTICIPANT SIDEBAR DOCK */}
@@ -648,15 +668,23 @@ export default function HostSessionPage() {
                 </p>
 
                 {/* QR Code Container with subtle ambient glow */}
-                {session?.qr_data ? (
-                  <div className="p-4 bg-white rounded-3xl shadow-2xl ring-8 ring-purple-500/20 mb-6">
+                <div className="p-4 bg-white rounded-3xl shadow-2xl ring-8 ring-purple-500/20 mb-6 flex items-center justify-center min-w-[240px] min-h-[240px]">
+                  {session?.qr_data ? (
                     <img src={session.qr_data} alt="QR Code" className="w-56 h-56 object-contain" />
-                  </div>
-                ) : (
-                  <div className="w-56 h-56 bg-white/10 rounded-3xl flex items-center justify-center text-gray-400 mb-6 animate-pulse">
-                    <Loader2 className="w-8 h-8 animate-spin" />
-                  </div>
-                )}
+                  ) : session?.code ? (
+                    <QRCode
+                      value={`${window.location.origin}/join/${session.code}`}
+                      size={224}
+                      style={{ height: 'auto', maxWidth: '100%', width: '100%' }}
+                      viewBox="0 0 256 256"
+                    />
+                  ) : (
+                    <div className="w-56 h-56 flex flex-col items-center justify-center text-gray-400 gap-2">
+                      <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
+                      <span className="text-xs text-gray-500">Loading QR...</span>
+                    </div>
+                  )}
+                </div>
 
                 <div className="bg-purple-600/20 border border-purple-500/40 text-purple-200 px-6 py-2.5 rounded-2xl font-mono text-2xl font-black tracking-widest mb-4">
                   PIN: {session?.code}
@@ -715,17 +743,19 @@ export default function HostSessionPage() {
 
                 {/* Big Launch Button */}
                 <div className="mt-8">
-                  <button
-                    onClick={handleStartQuiz}
-                    disabled={participants.length === 0}
-                    className="w-full py-5 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 disabled:pointer-events-none text-white font-black rounded-2xl shadow-xl shadow-purple-900/40 flex items-center justify-center gap-3 text-xl transition-all transform hover:scale-[1.01] active:scale-[0.99]"
-                  >
-                    <Play className="w-6 h-6 fill-white" />
-                    <span>Start Quiz Presentation</span>
-                    <span className="text-xs bg-white/20 px-2.5 py-1 rounded-lg uppercase tracking-wider font-semibold ml-2 hidden sm:inline">
-                      Space / ➔
-                    </span>
-                  </button>
+                  <div className="flex justify-center">
+                    <MagneticButton
+                      onClick={handleStartQuiz}
+                      disabled={participants.length === 0}
+                      className="w-full py-5 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 disabled:pointer-events-none text-white font-black rounded-2xl shadow-xl shadow-purple-900/40 flex items-center justify-center gap-3 text-xl transition-all"
+                    >
+                      <Play className="w-6 h-6 fill-white" />
+                      <span>Start Quiz Presentation</span>
+                      <span className="text-xs bg-white/20 px-2.5 py-1 rounded-lg uppercase tracking-wider font-semibold ml-2 hidden sm:inline">
+                        Space / ➔
+                      </span>
+                    </MagneticButton>
+                  </div>
                   <p className="text-center text-xs text-gray-400 mt-2">
                     Press <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono">Space</kbd> or click button when ready
                   </p>
@@ -868,8 +898,7 @@ export default function HostSessionPage() {
                   onSwitchToGrid={() => setAnswerViewMode('grid')}
                 />
               ) : (
-                /* Kahoot-Style Options Grid with Live Voting Bars */
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+                <div ref={hostOptionsGridRef} className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
                   {currentQuestion.options?.map((opt, i) => {
                     const style = OPTION_STYLES[i % OPTION_STYLES.length];
                     const isCorrect = isAnswerRevealed && timeUpData?.correctOptions?.some((co) => co.id === opt.id);
@@ -878,16 +907,16 @@ export default function HostSessionPage() {
                       answersCount > 0 ? Math.round((votes / answersCount) * 100) : 0;
 
                     return (
-                      <div
-                        key={opt.id || i}
-                        className={`relative p-6 rounded-3xl overflow-hidden font-bold text-xl sm:text-2xl shadow-lg transition-all duration-300 flex flex-col justify-between min-h-[120px] ${
-                          isAnswerRevealed
-                            ? isCorrect
-                              ? 'ring-4 ring-emerald-400 bg-emerald-500 text-white scale-[1.02] shadow-emerald-900/50'
-                              : 'opacity-35 bg-slate-800 text-gray-400 scale-[0.98]'
-                            : `${style.bg} text-white`
-                        }`}
-                      >
+                      <TiltCard key={opt.id || i} maxTilt={3} scale={1.01} className="host-grid-option-anim">
+                        <div
+                          className={`relative p-6 rounded-3xl overflow-hidden font-bold text-xl sm:text-2xl shadow-lg transition-all duration-300 flex flex-col justify-between min-h-[120px] ${
+                            isAnswerRevealed
+                              ? isCorrect
+                                ? 'ring-4 ring-emerald-400 bg-emerald-500 text-white scale-[1.02] shadow-emerald-900/50'
+                                : 'opacity-35 bg-slate-800 text-gray-400 scale-[0.98]'
+                              : `${style.bg} text-white`
+                          }`}
+                        >
                         {/* Background Vote Percentage Fill Bar (Live update as answers come in!) */}
                         {answersCount > 0 && (
                           <div
@@ -927,11 +956,12 @@ export default function HostSessionPage() {
                         {/* Bottom Row: Live Vote Count & Percentage Bar */}
                         <div className="relative z-10 flex items-center justify-between text-xs sm:text-sm font-extrabold uppercase tracking-wider mt-4 opacity-90">
                           <span>
-                            {votes} {votes === 1 ? 'vote' : 'votes'}
+                            <AnimatedNumber value={votes} /> {votes === 1 ? 'vote' : 'votes'}
                           </span>
-                          <span>{votePercent}%</span>
+                          <span><AnimatedNumber value={votePercent} suffix="%" /></span>
                         </div>
                       </div>
+                    </TiltCard>
                     );
                   })}
                 </div>
@@ -1035,7 +1065,7 @@ export default function HostSessionPage() {
                 </div>
               </div>
 
-              <button
+              <MagneticButton
                 onClick={handleNextQuestion}
                 className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black rounded-2xl shadow-xl flex items-center gap-2 text-sm transition"
               >
@@ -1045,15 +1075,15 @@ export default function HostSessionPage() {
                     : 'Next Question'}
                 </span>
                 <ChevronRight className="w-4 h-4" />
-              </button>
+              </MagneticButton>
             </div>
 
             {/* Top 5 Highlighted Podiums */}
-            <div className="space-y-3 mb-8">
+            <div ref={scoreboardRef} className="space-y-3 mb-8">
               {leaderboard.slice(0, 7).map((entry, idx) => (
                 <div
                   key={idx}
-                  className={`flex items-center justify-between p-4 sm:p-5 rounded-2xl border transition-all ${
+                  className={`scoreboard-row-anim flex items-center justify-between p-4 sm:p-5 rounded-2xl border transition-all ${
                     idx === 0
                       ? 'bg-amber-500/20 border-amber-500/40 text-amber-200 shadow-lg shadow-amber-950/20'
                       : idx === 1
@@ -1082,7 +1112,7 @@ export default function HostSessionPage() {
                     <span className="font-extrabold text-xl">{entry.nickname}</span>
                   </div>
                   <span className="font-black text-2xl tracking-tight text-purple-400">
-                    {entry.score} <span className="text-xs uppercase opacity-70">pts</span>
+                    <AnimatedNumber value={entry.score} /> <span className="text-xs uppercase opacity-70">pts</span>
                   </span>
                 </div>
               ))}
@@ -1124,17 +1154,20 @@ export default function HostSessionPage() {
                 const medal = medals[idx] || medals[0];
 
                 return (
-                  <div
-                    key={idx}
-                    className={`p-6 rounded-3xl border-2 flex flex-col items-center justify-center shadow-xl ${medal.color}`}
-                  >
-                    <span className="text-4xl mb-2">{medal.emoji}</span>
-                    <span className="text-xs uppercase font-extrabold tracking-widest opacity-80 mb-1">
-                      {medal.label}
-                    </span>
-                    <span className="text-2xl font-black truncate max-w-[180px] mb-2">{p.nickname}</span>
-                    <span className="text-lg font-extrabold text-purple-300">{p.score} pts</span>
-                  </div>
+                  <TiltCard key={idx} maxTilt={4} scale={1.02}>
+                    <div
+                      className={`p-6 rounded-3xl border-2 flex flex-col items-center justify-center shadow-xl h-full ${medal.color}`}
+                    >
+                      <span className="text-4xl mb-2">{medal.emoji}</span>
+                      <span className="text-xs uppercase font-extrabold tracking-widest opacity-80 mb-1">
+                        {medal.label}
+                      </span>
+                      <span className="text-2xl font-black truncate max-w-[180px] mb-2">{p.nickname}</span>
+                      <span className="text-lg font-extrabold text-purple-300">
+                        <AnimatedNumber value={p.score} /> pts
+                      </span>
+                    </div>
+                  </TiltCard>
                 );
               })}
             </div>
@@ -1163,14 +1196,14 @@ export default function HostSessionPage() {
 
             {/* Export and Exit Buttons */}
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <button
+              <MagneticButton
                 onClick={handleExportCSV}
                 disabled={exporting}
                 className="flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-extrabold px-8 py-4 rounded-2xl shadow-xl transition"
               >
                 {exporting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
                 <span>Export Results (CSV)</span>
-              </button>
+              </MagneticButton>
               <button
                 onClick={() => navigate('/host/quizzes')}
                 className={`px-8 py-4 rounded-2xl font-extrabold border transition ${

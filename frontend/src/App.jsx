@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
+import '@/lib/toast';
+import AnimatedToastItem from '@/components/AnimatedToast';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { SocketProvider } from '@/contexts/SocketContext';
 import ProtectedRoute from '@/components/ProtectedRoute';
@@ -31,7 +33,15 @@ export default function App() {
   return (
     <AuthProvider>
       <SocketProvider>
-        <Toaster position="top-right" />
+        <Toaster
+          position="top-right"
+          gutter={10}
+          toastOptions={{
+            duration: 3000,
+          }}
+        >
+          {(t) => <AnimatedToastItem toast={t} />}
+        </Toaster>
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<RootRedirect />} />
