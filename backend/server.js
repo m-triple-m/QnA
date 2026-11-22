@@ -45,7 +45,7 @@ async function bootstrap() {
     logger.info(`Database connected and models synchronized.`);
 
     // 3. Start listening on 0.0.0.0 to allow LAN & Localhost access
-    server.listen(PORT, () => {
+    server.listen(PORT, HOST, () => {
       const lanIps = getLanIpAddresses();
       logger.info(`QuizLive backend running on port ${PORT} [${NODE_ENV}]`);
       logger.info(`  > Local:   http://localhost:${PORT}`);

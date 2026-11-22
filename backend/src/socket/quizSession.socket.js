@@ -424,13 +424,21 @@ module.exports = function(io) {
           await session.update({ status: 'ended', ended_at: new Date() });
         }
 
-        io.to(`session:${sessionId}`).emit('session:open_poll_ended', {
+        const pollEndPayload = {
           message: 'The Live Open Poll has ended. Thank you for participating!',
           totalSubmissions: totalSubs,
           totalParticipants,
           topWords: finalWords.slice(0, 5),
-        });
+        };
+
+        io.to(`session:${sessionId}`).emit('session:open_poll_ended', pollEndPayload);
+        io.to(`host:${sessionId}`).emit('session:open_poll_ended', pollEndPayload);
+        socket.emit('session:open_poll_ended', pollEndPayload);
+
         io.to(`session:${sessionId}`).emit('session:ended', {
+          message: 'The Live Open Poll has ended.',
+        });
+        io.to(`host:${sessionId}`).emit('session:ended', {
           message: 'The Live Open Poll has ended.',
         });
         logger.info(`Session ${sessionId} open poll ended by host`);

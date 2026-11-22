@@ -6,8 +6,9 @@ import {
   QrCode, Copy, Check, Maximize2, Sparkles, LayoutGrid, BarChart2,
   ArrowLeft, Search, Radio, ChevronRight, ChevronLeft, MessageSquare, Download,
   Layers, Edit3, ArrowUp, ArrowDown, Rocket, BookOpen, BookmarkPlus, CheckCircle2,
-  FolderInput, Loader2, Power, Square, AlertTriangle, Eye, Settings, Award
+  FolderInput, Loader2, Power, Square, AlertTriangle, Eye, Settings, Award, LogOut
 } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 import { useSocketContext } from '@/contexts/SocketContext';
 import { createOpenPollSession, getSessionById, getMyQuizzes, getQuiz } from '@/api/endpoints';
 import sound from '@/lib/sound';
@@ -38,7 +39,14 @@ const PRESET_QUESTIONS = [
 
 export default function OpenQnAPage() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const { getSocket } = useSocketContext();
+
+  const handleLogout = () => {
+    logout();
+    toast.success('Logged out successfully');
+    navigate('/login');
+  };
 
   const [session, setSession] = useState(null);
   const [participants, setParticipants] = useState([]);
@@ -430,8 +438,8 @@ export default function OpenQnAPage() {
     }
 
     if (editingPreparedId) {
-      setPreparedQuestions((prev) =>
-        prev.map((q) =>
+      setPreparedQuestions((prev) => {
+        const next = prev.map((q) =>
           q.id === editingPreparedId
             ? {
                 ...q,
@@ -443,8 +451,12 @@ export default function OpenQnAPage() {
                 timeLimitSec: Number(timeLimitSec),
               }
             : q
-        )
-      );
+        );
+        try {
+          localStorage.setItem('quizlive_open_prepared_deck', JSON.stringify(next));
+        } catch { }
+        return next;
+      });
       toast.success('Question updated in deck!');
     } else {
       const newQ = {
@@ -456,7 +468,13 @@ export default function OpenQnAPage() {
         options: cleanOptions,
         timeLimitSec: Number(timeLimitSec),
       };
-      setPreparedQuestions((prev) => [...prev, newQ]);
+      setPreparedQuestions((prev) => {
+        const next = [...prev, newQ];
+        try {
+          localStorage.setItem('quizlive_open_prepared_deck', JSON.stringify(next));
+        } catch { }
+        return next;
+      });
       toast.success('Question added in advance to deck!');
     }
 
@@ -514,7 +532,13 @@ export default function OpenQnAPage() {
 
   // Delete question from deck
   const handleDeletePreparedQuestion = (id) => {
-    setPreparedQuestions((prev) => prev.filter((q) => q.id !== id));
+    setPreparedQuestions((prev) => {
+      const next = prev.filter((q) => q.id !== id);
+      try {
+        localStorage.setItem('quizlive_open_prepared_deck', JSON.stringify(next));
+      } catch { }
+      return next;
+    });
     if (activePreparedId === id) setActivePreparedId(null);
     toast.success('Question removed from deck');
   };
@@ -528,6 +552,9 @@ export default function OpenQnAPage() {
       const temp = copy[idx];
       copy[idx] = copy[targetIdx];
       copy[targetIdx] = temp;
+      try {
+        localStorage.setItem('quizlive_open_prepared_deck', JSON.stringify(copy));
+      } catch { }
       return copy;
     });
   };
@@ -543,7 +570,13 @@ export default function OpenQnAPage() {
       options: [],
       timeLimitSec: 0,
     }));
-    setPreparedQuestions((prev) => [...prev, ...newPresets]);
+    setPreparedQuestions((prev) => {
+      const next = [...prev, ...newPresets];
+      try {
+        localStorage.setItem('quizlive_open_prepared_deck', JSON.stringify(next));
+      } catch { }
+      return next;
+    });
     toast.success(`Added ${newPresets.length} suggested questions to deck!`);
   };
 
@@ -579,7 +612,13 @@ export default function OpenQnAPage() {
         options: (q.options || []).map((o, oi) => ({ id: String(oi + 1), text: o.text })),
         timeLimitSec: q.time_limit_sec || 0,
       }));
-      setPreparedQuestions((prev) => [...prev, ...imported]);
+      setPreparedQuestions((prev) => {
+        const next = [...prev, ...imported];
+        try {
+          localStorage.setItem('quizlive_open_prepared_deck', JSON.stringify(next));
+        } catch { }
+        return next;
+      });
       setShowQuizImportModal(false);
       toast.success(`Imported ${imported.length} questions from "${quiz.title}"!`);
     } catch (err) {
@@ -610,6 +649,18 @@ export default function OpenQnAPage() {
     socket.emit('host:end_open_poll', { sessionId: Number(session.id) });
     localStorage.removeItem('quizlive_active_open_session_id');
     setShowEndPollConfirm(false);
+
+    // Optimistically update host UI immediately so the screen transitions without delay
+    setActiveQuestion(null);
+    setActivePreparedId(null);
+    setPollSummary({
+      message: 'The Live Open Poll has ended.',
+      totalSubmissions: totalSubmissions,
+      totalParticipants: totalResponders || participants.length,
+      topWords: cloudWords.slice(0, 5),
+    });
+    sound.play('fanfare');
+    toast.success('Live Open Poll ended!');
   };
 
   // Launch the poll from standby (starts first prepared question or opens composer)
@@ -804,6 +855,16 @@ export default function OpenQnAPage() {
             title="Toggle Fullscreen (Key: F)"
           >
             <Maximize2 className="w-4 h-4" />
+          </button>
+
+          {/* Sign Out Button */}
+          <button
+            onClick={handleLogout}
+            className="p-2 rounded-xl bg-white/10 hover:bg-rose-600/30 text-gray-200 hover:text-rose-300 border border-transparent hover:border-rose-500/30 transition flex items-center gap-1.5"
+            title="Sign Out"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="hidden sm:inline text-xs font-semibold">Sign Out</span>
           </button>
         </div>
       </header>

@@ -10,6 +10,7 @@ import Spinner from '@/components/Spinner';
 // Pages
 import LoginPage from '@/pages/auth/LoginPage';
 import RegisterPage from '@/pages/auth/RegisterPage';
+import HostLayout from '@/pages/host/HostLayout';
 import HostDashboard from '@/pages/host/HostDashboard';
 import QuizListPage from '@/pages/host/QuizListPage';
 import QuizBuilderPage from '@/pages/host/QuizBuilderPage';
@@ -48,39 +49,21 @@ export default function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
 
-            {/* Host routes */}
+            {/* Host routes with HostLayout navigation and user session */}
             <Route
               path="/host"
               element={
                 <ProtectedRoute role="host">
-                  <HostDashboard />
+                  <HostLayout />
                 </ProtectedRoute>
               }
-            />
-            <Route
-              path="/host/quizzes"
-              element={
-                <ProtectedRoute role="host">
-                  <QuizListPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/host/quizzes/new"
-              element={
-                <ProtectedRoute role="host">
-                  <QuizBuilderPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/host/quizzes/:id/edit"
-              element={
-                <ProtectedRoute role="host">
-                  <QuizBuilderPage />
-                </ProtectedRoute>
-              }
-            />
+            >
+              <Route index element={<HostDashboard />} />
+              <Route path="quizzes" element={<QuizListPage />} />
+              <Route path="quizzes/new" element={<QuizBuilderPage />} />
+              <Route path="quizzes/:id/edit" element={<QuizBuilderPage />} />
+            </Route>
+
             <Route
               path="/host/session/:id"
               element={

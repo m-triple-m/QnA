@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   BookOpen, Users, PlayCircle, TrendingUp,
-  Plus, ChevronRight, Calendar, Clock, Cloud
+  Plus, ChevronRight, Calendar, Clock, Cloud, LogOut
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDashboardStats, getRecentSessions } from '@/api/endpoints';
@@ -41,8 +41,14 @@ function StatCard({ icon: Icon, label, value, color, loading }) {
 }
 
 export default function HostDashboard() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    toast.success('Logged out successfully');
+    navigate('/login');
+  };
 
   const [stats, setStats] = useState(null);
   const [sessions, setSessions] = useState([]);
@@ -92,12 +98,22 @@ export default function HostDashboard() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-8">
-      {/* Welcome */}
-      <div>
-        <h1 className="text-3xl font-extrabold text-gray-800">
-          Welcome back, {user?.name?.split(' ')[0] ?? 'Host'}! 👋
-        </h1>
-        <p className="text-gray-500 mt-1">Here&apos;s what&apos;s happening with your quizzes.</p>
+      {/* Welcome & User Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-extrabold text-gray-800">
+            Welcome back, {user?.name?.split(' ')[0] ?? 'Host'}! 👋
+          </h1>
+          <p className="text-gray-500 mt-1">Here&apos;s what&apos;s happening with your quizzes.</p>
+        </div>
+        <button
+          onClick={handleLogout}
+          className="self-start sm:self-center flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition shadow-sm"
+          title="Sign Out of Account"
+        >
+          <LogOut className="w-4 h-4" />
+          <span>Sign Out</span>
+        </button>
       </div>
 
       {/* Stats */}
